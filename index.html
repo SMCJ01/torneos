@@ -748,6 +748,16 @@ const ECDSA = { name: 'ECDSA', namedCurve: 'P-256' }, SIGN = { name: 'ECDSA', ha
 let LIVE = null, liveTimer = null, liveLastCode = null;
 let SPEC = null; // espectador en vivo: { topic, pub, key, ver, status, checked }
 
+async function shortId(pub) {
+  const h = new Uint8Array(await crypto.subtle.digest('SHA-256', b64uDecode(pub)));
+  return b64uEncode(h.subarray(0, 12));
+}
+async function ensureSid() {
+  if (!LIVE || LIVE.sid) return;
+  LIVE.sid = await shortId(LIVE.pub);
+  if (LIVE.topic !== 'trn' + LIVE.sid) LIVE.legacy = true;
+  try { localStorage.setItem(LIVE_KEY, JSON.stringify(LIVE)); } catch (e) { }
+}
 function loadLive() {
   try { const o = JSON.parse(localStorage.getItem(LIVE_KEY)); if (o && o.topic && o.priv && o.pub) return o; } catch (e) { }
   return null;
@@ -758,8 +768,8 @@ async function ensureLive() {
   const kp = await crypto.subtle.generateKey(ECDSA, true, ['sign', 'verify']);
   const priv = await crypto.subtle.exportKey('jwk', kp.privateKey);
   const pub = b64uEncode(new Uint8Array(await crypto.subtle.exportKey('raw', kp.publicKey)));
-  const rnd = new Uint8Array(15); crypto.getRandomValues(rnd);
-  LIVE = { topic: 'trn' + b64uEncode(rnd), priv, pub };
+  const sid = await shortId(pub);
+  LIVE = { topic: 'trn' + sid, sid, priv, pub };
   try { localStorage.setItem(LIVE_KEY, JSON.stringify(LIVE)); } catch (e) { }
   return LIVE;
 }
@@ -785,12 +795,16 @@ async function publishLive(force) {
   const ver = Date.now();
   setLiveStatus('sync');
   try {
+    await ensureSid();
     const key = await crypto.subtle.importKey('jwk', LIVE.priv, ECDSA, false, ['sign']);
     const sig = b64uEncode(new Uint8Array(await crypto.subtle.sign(SIGN, key, new TextEncoder().encode(ver + '.' + code))));
     const parts = []; for (let i = 0; i < code.length; i += CHUNK) parts.push(code.slice(i, i + CHUNK));
     for (let i = 0; i < parts.length; i++) {
-      const r = await fetch(NTFY + LIVE.topic, { method: 'POST', body: `TRN1|${ver}|${i}|${parts.length}|${i === 0 ? sig : ''}|${parts[i]}` });
+      const r = await fetch(NTFY + 'trn' + LIVE.sid, { method: 'POST', body: `TRN2|${ver}|${i}|${parts.length}|${i === 0 ? sig : ''}|${i === 0 ? LIVE.pub : ''}|${parts[i]}` });
       if (!r.ok) throw new Error('HTTP ' + r.status);
+    }
+    if (LIVE.legacy) for (let i = 0; i < parts.length; i++) { // enlaces largos compartidos antes
+      await fetch(NTFY + LIVE.topic, { method: 'POST', body: `TRN1|${ver}|${i}|${parts.length}|${i === 0 ? sig : ''}|${parts[i]}` }).catch(() => { });
     }
     liveLastCode = code; setLiveStatus('ok');
   } catch (e) {
@@ -806,12 +820,15 @@ async function pollLive() {
     (await r.text()).split('\n').forEach(line => {
       if (!line.trim()) return;
       let o; try { o = JSON.parse(line); } catch (e) { return; }
-      if (o.event !== 'message' || typeof o.message !== 'string' || !o.message.startsWith('TRN1|')) return;
-      const p = o.message.split('|'); if (p.length !== 6) return;
-      const g = groups[p[1]] || (groups[p[1]] = { n: Number(p[3]), parts: {}, sig: '' });
-      g.parts[Number(p[2])] = p[5]; if (p[4]) g.sig = p[4];
+      if (o.event !== 'message' || typeof o.message !== 'string') return;
+      const p = o.message.split('|');
+      const v2 = p[0] === 'TRN2' && p.length === 7;
+      if (!v2 && !(p[0] === 'TRN1' && p.length === 6)) return;
+      if (v2 !== !!SPEC.sid) return;
+      const g = groups[p[1]] || (groups[p[1]] = { n: Number(p[3]), parts: {}, sig: '', pub: '' });
+      g.parts[Number(p[2])] = p[p.length - 1]; if (p[4]) g.sig = p[4]; if (v2 && p[5]) g.pub = p[5];
     });
-    if (!SPEC.key) SPEC.key = await crypto.subtle.importKey('raw', b64uDecode(SPEC.pub), ECDSA, false, ['verify']);
+    if (!SPEC.sid && !SPEC.key) SPEC.key = await crypto.subtle.importKey('raw', b64uDecode(SPEC.pub), ECDSA, false, ['verify']);
     const vers = Object.keys(groups).map(Number).filter(v => v > (SPEC.ver || 0)).sort((a, b) => b - a);
     for (const v of vers) {
       const g = groups[v];
@@ -820,6 +837,10 @@ async function pollLive() {
       if (parts.some(x => x == null)) continue;
       const code = parts.join('');
       try {
+        if (SPEC.sid) { // enlace corto: la clave viaja en el mensaje y debe coincidir con el id del enlace
+          if (!g.pub || await shortId(g.pub) !== SPEC.sid) continue;
+          if (SPEC.pub !== g.pub) { SPEC.key = await crypto.subtle.importKey('raw', b64uDecode(g.pub), ECDSA, false, ['verify']); SPEC.pub = g.pub; }
+        }
         const ok = await crypto.subtle.verify(SIGN, SPEC.key, b64uDecode(g.sig), new TextEncoder().encode(v + '.' + code));
         if (!ok) continue;
         S = normalize(Object.assign(defaultState(), await decodeState(code)));
@@ -839,7 +860,7 @@ async function share() {
   try {
     await ensureLive();
     await publishLive(true);
-    url = `${base}#live=${LIVE.topic}.${LIVE.pub}.${snap}`; live = true;
+    url = `${base}#v=${LIVE.sid}`; live = true;
     render();
   } catch (e) {
     url = `${base}#view=${snap}`;
@@ -1085,6 +1106,9 @@ function renderRunning() {
   return h;
 }
 function renderSpecSetup() {
+  if (SPEC && SPEC.sid && !SPEC.ver) return SPEC.status === 'loading'
+    ? '<div class="card empty-state"><div class="e">⏳</div><h2 style="justify-content:center">Cargando torneo…</h2></div>'
+    : '<div class="card empty-state"><div class="e">📡</div><h2 style="justify-content:center">Aún no hay datos del torneo</h2><p>Pide al organizador que abra su página del torneo y luego pulsa ↻ Actualizar.</p></div>';
   return renderPoster(S.name || 'Torneo', 'Inscripciones abiertas') + `<div class="card empty-state"><div class="e">⏳</div><h2 style="justify-content:center">El torneo aún no ha sido sorteado</h2>
     <p>${S.teams.length} participantes inscritos${S.teams.length ? ': ' + S.teams.map(t => esc(t.name)).join(', ') : ''}.</p></div>`;
 }
@@ -1242,6 +1266,18 @@ window.addEventListener('hashchange', () => location.reload());
 
 /* ---------- Inicio ---------- */
 (async function init() {
+  if (/^#v=[\w-]{16}$/.test(location.hash)) {
+    READONLY = true;
+    const sid = location.hash.slice(3);
+    SPEC = { topic: 'trn' + sid, sid, status: 'loading' };
+    S = defaultState();
+    render();
+    if (!(window.crypto && crypto.subtle)) { SPEC.status = 'err'; render(); return; }
+    await pollLive();
+    setInterval(() => { if (!document.hidden) pollLive(); }, 20000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) pollLive(); });
+    return;
+  }
   if (location.hash.startsWith('#live=')) {
     READONLY = true;
     const [topic, pub, snap] = location.hash.slice(6).split('.');
