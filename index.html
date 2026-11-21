@@ -209,6 +209,8 @@ select.inp option{background:#0b1c48}
 .match.final{width:256px;border-color:var(--gold);box-shadow:0 0 0 1px rgba(240,199,94,.35),0 0 34px rgba(240,199,94,.28)}
 .match.ghost{opacity:.7;border-style:dashed}
 .match.byematch{opacity:.55;border-style:dashed}
+.mclear{position:absolute;top:-19px;right:2px;padding:0 6px;border:0;background:none;color:var(--mut);font-size:11px;cursor:pointer;border-radius:6px}
+.mclear:hover{color:#fecaca;background:rgba(248,113,113,.15)}
 .mnum{position:absolute;top:-18px;left:4px;font-size:11px;color:var(--mut);font-weight:700;letter-spacing:.04em}
 .team{display:flex;align-items:center;gap:6px;height:40px;padding:0 6px 0 10px;border-left:3px solid transparent;transition:background .12s,border-color .12s;user-select:none}
 .team:first-of-type{border-radius:11px 11px 0 0}
@@ -655,9 +657,10 @@ function getCtx(scope, id) {
 function setWinner(scope, id, team) {
   const ctx = getCtx(scope, id);
   if (!ctx || !ctx.a || !ctx.b || ctx.a === BYE || ctx.b === BYE) return;
+  if (ctx.m.w === team) { toast(`✓ ${teamName(team)} ya es el ganador y pasó a la siguiente fase.`); return render(); }
   if (!ctx.guard()) return render();
-  const m = ctx.m, oldW = m.w;
-  m.w = (m.w === team) ? null : team;
+  const m = ctx.m;
+  m.w = team;
   if (!m.w) { m.sa = null; m.sb = null; }
   else if (m.sa != null && m.sb != null) {
     const ws = m.w === ctx.a ? m.sa : m.sb, ls = m.w === ctx.a ? m.sb : m.sa;
@@ -874,7 +877,8 @@ function renderDuel(o) {
     return `<div class="${cls.join(' ')}"${attrs}><span class="tname">${isW ? '<span class="ck">✓</span>' : ''}${label}${tag || ''}</span>${sc}</div>`;
   };
   const cls = ['match']; if (o.cls) cls.push(o.cls); if (o.w) cls.push('done'); if (o.bye) cls.push('byematch');
-  return `<div class="${cls.join(' ')}">${o.num ? `<span class="mnum">#${o.num}</span>` : ''}${row('a', o.a, o.la, o.sa, o.ta)}${row('b', o.b, o.lb, o.sb, o.tb)}</div>`;
+  const clr = can && o.w ? `<button class="mclear" data-act="clearMatch" data-scope="${o.scope}" data-id="${esc(o.id)}" title="Borrar el resultado de este partido">↺ borrar</button>` : '';
+  return `<div class="${cls.join(' ')}">${o.num ? `<span class="mnum">#${o.num}</span>` : ''}${clr}${row('a', o.a, o.la, o.sa, o.ta)}${row('b', o.b, o.lb, o.sb, o.tb)}</div>`;
 }
 const TROPHY_SVG = `<svg viewBox="0 0 120 150" width="112" height="140" aria-hidden="true">
 <defs><linearGradient id="tr-s" x1="0" x2="1"><stop offset="0" stop-color="#8d98b3"/><stop offset=".35" stop-color="#f4f7ff"/><stop offset=".6" stop-color="#c3cbe0"/><stop offset="1" stop-color="#6d7894"/></linearGradient>
@@ -1085,6 +1089,7 @@ function renderSpecSetup() {
     <p>${S.teams.length} participantes inscritos${S.teams.length ? ': ' + S.teams.map(t => esc(t.name)).join(', ') : ''}.</p></div>`;
 }
 function render() {
+  if (holdRender) return;
   teamMap = {}; S.teams.forEach(t => teamMap[t.id] = t);
   const ae = document.activeElement;
   const fk = ui.focus || (ae && ae.dataset ? ae.dataset.fk : null);
@@ -1134,6 +1139,12 @@ const ACTIONS = {
   unlockGroups() { if (confirm('Se eliminará la fase eliminatoria para volver a editar los grupos. ¿Continuar?')) { S.t.elim = null; ui.tab = 'groups'; afterChange(); } },
   tab(el) { ui.tab = el.dataset.tab; render(); },
   win(el) { setWinner(el.dataset.scope, el.dataset.id, el.dataset.team); },
+  clearMatch(el) {
+    const ctx = getCtx(el.dataset.scope, el.dataset.id);
+    if (!ctx || !ctx.guard()) return render();
+    ctx.m.w = null; ctx.m.sa = null; ctx.m.sb = null;
+    afterChange(); toast('Resultado borrado.');
+  },
   llAuto() {
     const st = luckyStatus(S.t.elim); if (!st.complete) return;
     const ranked = rankLosers(st.losers), need = st.need;
@@ -1181,6 +1192,11 @@ const ACTIONS = {
 };
 const READONLY_OK = new Set(['tab', 'closeModal', 'copyLink', 'nativeShare', 'exitView', 'refreshLive']);
 
+let pointerIsDown = false, holdRender = false, renderPending = false;
+document.addEventListener('pointerdown', () => { pointerIsDown = true; }, true);
+const flushJobs = () => { pointerIsDown = false; if (renderPending) { renderPending = false; setTimeout(render, 0); } };
+document.addEventListener('pointerup', flushJobs, true);
+document.addEventListener('pointercancel', flushJobs, true);
 document.addEventListener('click', e => {
   if (e.target.id === 'modal') return ACTIONS.closeModal();
   const el = e.target.closest('[data-act]');
@@ -1193,7 +1209,13 @@ document.addEventListener('click', e => {
 document.addEventListener('change', e => {
   const el = e.target, k = el.dataset && el.dataset.chg;
   if (!k || READONLY) return;
-  if (k === 'score') { const d = { ...el.dataset }, v = el.value; setTimeout(() => setScore(d.scope, d.id, d.side, v), 0); }
+  if (k === 'score') {
+    const d = { ...el.dataset }, v = el.value, job = () => setScore(d.scope, d.id, d.side, v);
+    // Si el marcador se confirma porque el usuario está haciendo clic en otro lugar (p. ej. en el nombre
+    // del ganador), se espera a que termine ese clic para no perderlo al redibujar la llave.
+    if (pointerIsDown) { holdRender = true; try { job(); } finally { holdRender = false; } renderPending = true; }
+    else setTimeout(job, 0);
+  }
   else if (k === 'groupCount') { S.groupCount = Number(el.value); save(); render(); }
   else if (k === 'qualifiers') { S.qualifiers = Number(el.value); save(); render(); }
   else if (k === 'llSel') {
