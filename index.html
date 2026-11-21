@@ -373,8 +373,10 @@ function makeDynamicRound(entrants, ll, groupOf) {
 }
 function buildElim(ids, rule, groupOf, tags) {
   let e;
-  if (isPow2(ids.length) || rule === 'bye') e = buildBracketBye(ids, groupOf);
-  else e = { mode: 'lucky', rounds: [makeDynamicRound(ids, [], groupOf)] };
+  /* Potencia de 2: llave clásica. Si no: juegan todos los equipos posibles en cada ronda
+     (10 equipos = 5 partidos); si sobra uno impar, pasa directo (bye) o se completa con mejor perdedor. */
+  if (isPow2(ids.length)) e = buildBracketBye(ids, groupOf);
+  else e = { mode: 'lucky', rule: rule === 'bye' ? 'bye' : 'lucky', rounds: [makeDynamicRound(ids, [], groupOf)] };
   if (tags) e.tags = tags;
   return e;
 }
@@ -443,12 +445,8 @@ function elimChampion(elim) {
   return st.complete && st.survivors.length === 1 ? st.survivors[0] : null;
 }
 function roundName(entrants, ri) {
-  if (entrants <= 2) return 'Final';
-  if (entrants <= 4) return 'Semifinales';
-  if (entrants <= 8) return 'Cuartos de final';
-  if (entrants <= 16) return 'Octavos de final';
-  if (entrants <= 32) return 'Dieciseisavos';
-  return 'Ronda ' + (ri + 1);
+  const names = { 2: 'Final', 4: 'Semifinales', 8: 'Cuartos de final', 16: 'Octavos de final', 32: 'Dieciseisavos' };
+  return names[entrants] || 'Ronda ' + (ri + 1);
 }
 
 /* ---------- Grupos ---------- */
@@ -633,7 +631,7 @@ function afterChange() {
     const e = S.t.elim;
     if (e && e.mode === 'lucky') {
       const st = luckyStatus(e);
-      if (st.complete && st.survivors.length > 1 && st.need === 0) e.rounds.push(makeDynamicRound(shuffle(st.survivors), []));
+      if (st.complete && st.survivors.length > 1 && (st.need === 0 || e.rule === 'bye')) e.rounds.push(makeDynamicRound(shuffle(st.survivors), []));
     }
   }
   if (cleared) toast(`Se limpiaron ${cleared} resultado(s) de rondas siguientes afectadas.`);
@@ -840,12 +838,12 @@ function renderLadder() {
 function oddRuleBlock(count) {
   if (count < 2) return '';
   if (isPow2(count)) return `<div class="notice ok">✓ ${count} equipos es potencia de 2: llaves perfectas, no se necesitan pases directos.</div>`;
-  const p = nextPow2(count), byes = p - count;
+  const m1 = Math.floor(count / 2), odd = count % 2;
   const opt = (r, ic, t, d) => `<button class="opt-card ${S.oddRule === r ? 'sel' : ''}" data-act="oddRule" data-r="${r}"><span class="ic">${ic}</span><span><b>${t}</b><span>${d}</span></span><span class="radio"></span></button>`;
-  return `<div class="notice warn">${count} equipos no es potencia de 2. Elige cómo cuadrar las llaves:</div>
+  return `<div class="notice warn">${count} equipos: la 1.ª ronda tendrá <b>${m1} ${plural(m1, 'llave')}</b>${odd ? ' y 1 equipo sorteado pasa directo' : ''}. Elige qué hacer cuando una ronda quede impar:</div>
     <div class="fmt-grid" style="margin-top:10px">
-      ${opt('bye', '⏭', 'Opción A — Pase directo (Bye)', `Se sortean ${byes} ${plural(byes, 'equipo')} que descansan y pasan directo a la 2.ª ronda (llave de ${p}).`)}
-      ${opt('lucky', '♻', 'Opción B — Mejor perdedor (Lucky Loser)', 'Se juegan los partidos posibles y el/los mejor(es) perdedor(es) reingresan para cuadrar la siguiente ronda. Puedes cambiar a pase directo entre rondas.')}
+      ${opt('bye', '⏭', 'Opción A — Pase directo (Bye)', 'Juegan todos; si en una ronda queda un número impar, se sortea 1 equipo que descansa y pasa directo a la siguiente.')}
+      ${opt('lucky', '♻', 'Opción B — Mejor perdedor (Lucky Loser)', 'Juegan todos; luego el/los mejor(es) perdedor(es) reingresan para cuadrar exactamente la siguiente ronda. Puedes cambiar a pase directo entre rondas.')}
     </div>`;
 }
 function renderSetup() {
