@@ -55,7 +55,14 @@ i{font-style:normal;color:var(--mut)}
 .pill.spec{color:var(--warn);border-color:rgba(251,191,36,.45);background:var(--warnbg)}
 .pill .dot{width:8px;height:8px;border-radius:50%;background:currentColor;box-shadow:0 0 0 3px rgba(52,211,153,.22);animation:pulse 1.8s infinite}
 @keyframes pulse{50%{box-shadow:0 0 0 6px rgba(52,211,153,0)}}
-.toolbar{display:flex;gap:8px;flex-wrap:wrap}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.live-chip{display:inline-flex;align-items:center;gap:7px;padding:6px 11px;border-radius:999px;font-size:12.5px;font-weight:600;border:1px solid rgba(248,113,113,.45);background:rgba(248,113,113,.12);color:#fecaca}
+.live-chip.pending,.live-chip.sync{border-color:rgba(251,191,36,.45);background:var(--warnbg);color:#fde68a}
+.live-chip.err{border-color:rgba(248,113,113,.7);background:rgba(248,113,113,.2)}
+.ldot{width:8px;height:8px;border-radius:50%;background:#ef4444;box-shadow:0 0 0 0 rgba(239,68,68,.7);animation:onair 1.4s infinite;display:inline-block}
+@keyframes onair{70%{box-shadow:0 0 0 7px rgba(239,68,68,0)}100%{box-shadow:0 0 0 0 rgba(239,68,68,0)}}
+.banner .inner.live{background:rgba(239,68,68,.1);border-color:rgba(248,113,113,.45);color:#fee2e2}
+.onair{display:inline-flex;align-items:center;gap:6px;color:#fca5a5;margin-right:6px;letter-spacing:.06em}
 
 main{max-width:1500px;margin:0 auto;padding:22px}
 .banner{max-width:1500px;margin:14px auto 0;padding:0 22px}
@@ -374,6 +381,7 @@ const cssEsc = s => (window.CSS && CSS.escape) ? CSS.escape(s) : String(s).repla
 function save() {
   if (READONLY) return;
   try { localStorage.setItem(STORE_KEY, JSON.stringify(S)); } catch (e) { /* sin almacenamiento */ }
+  scheduleLive();
 }
 function normalize(o) {
   if (o.format === 'ladder') o.format = 'single';
@@ -727,15 +735,117 @@ async function copyText(txt) {
     document.body.appendChild(ta); ta.select(); const ok = document.execCommand('copy'); ta.remove(); return ok;
   } catch (e) { return false; }
 }
+/* ---------- Vista EN VIVO (canal ntfy.sh + firma digital ECDSA) ----------
+   El organizador publica cada cambio firmado con su clave privada (guardada solo en su navegador).
+   El enlace del espectador lleva el canal + la clave pública: solo acepta datos con firma válida. */
+const LIVE_KEY = 'organizador-torneos-live';
+const NTFY = 'https://ntfy.sh/';
+const CHUNK = 3500;
+const ECDSA = { name: 'ECDSA', namedCurve: 'P-256' }, SIGN = { name: 'ECDSA', hash: 'SHA-256' };
+let LIVE = null, liveTimer = null, liveLastCode = null;
+let SPEC = null; // espectador en vivo: { topic, pub, key, ver, status, checked }
+
+function loadLive() {
+  try { const o = JSON.parse(localStorage.getItem(LIVE_KEY)); if (o && o.topic && o.priv && o.pub) return o; } catch (e) { }
+  return null;
+}
+async function ensureLive() {
+  if (LIVE) return LIVE;
+  LIVE = loadLive(); if (LIVE) return LIVE;
+  const kp = await crypto.subtle.generateKey(ECDSA, true, ['sign', 'verify']);
+  const priv = await crypto.subtle.exportKey('jwk', kp.privateKey);
+  const pub = b64uEncode(new Uint8Array(await crypto.subtle.exportKey('raw', kp.publicKey)));
+  const rnd = new Uint8Array(15); crypto.getRandomValues(rnd);
+  LIVE = { topic: 'trn' + b64uEncode(rnd), priv, pub };
+  try { localStorage.setItem(LIVE_KEY, JSON.stringify(LIVE)); } catch (e) { }
+  return LIVE;
+}
+function liveChipHtml() {
+  return ({ ok: '<span class="ldot"></span> En vivo · sincronizado', pending: '⏳ Sincronizando…', sync: '⏳ Sincronizando…',
+            err: '⚠ Sin conexión · reintentando' })[ui.live] || '<span class="ldot"></span> En vivo';
+}
+function setLiveStatus(s) {
+  ui.live = s;
+  const el = document.getElementById('liveChip');
+  if (el) { el.innerHTML = liveChipHtml(); el.className = 'live-chip ' + s; }
+}
+function scheduleLive() {
+  if (READONLY || !LIVE) return;
+  clearTimeout(liveTimer); setLiveStatus('pending');
+  liveTimer = setTimeout(() => publishLive(), 2500);
+}
+async function publishLive(force) {
+  if (READONLY || !LIVE) return;
+  clearTimeout(liveTimer);
+  const code = await encodeState(JSON.parse(JSON.stringify(S)));
+  if (!force && code === liveLastCode) return setLiveStatus('ok');
+  const ver = Date.now();
+  setLiveStatus('sync');
+  try {
+    const key = await crypto.subtle.importKey('jwk', LIVE.priv, ECDSA, false, ['sign']);
+    const sig = b64uEncode(new Uint8Array(await crypto.subtle.sign(SIGN, key, new TextEncoder().encode(ver + '.' + code))));
+    const parts = []; for (let i = 0; i < code.length; i += CHUNK) parts.push(code.slice(i, i + CHUNK));
+    for (let i = 0; i < parts.length; i++) {
+      const r = await fetch(NTFY + LIVE.topic, { method: 'POST', body: `TRN1|${ver}|${i}|${parts.length}|${i === 0 ? sig : ''}|${parts[i]}` });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+    }
+    liveLastCode = code; setLiveStatus('ok');
+  } catch (e) {
+    setLiveStatus('err');
+    liveTimer = setTimeout(() => publishLive(force), 15000);
+  }
+}
+async function pollLive() {
+  try {
+    const r = await fetch(`${NTFY}${SPEC.topic}/json?poll=1&since=all`, { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const groups = {};
+    (await r.text()).split('\n').forEach(line => {
+      if (!line.trim()) return;
+      let o; try { o = JSON.parse(line); } catch (e) { return; }
+      if (o.event !== 'message' || typeof o.message !== 'string' || !o.message.startsWith('TRN1|')) return;
+      const p = o.message.split('|'); if (p.length !== 6) return;
+      const g = groups[p[1]] || (groups[p[1]] = { n: Number(p[3]), parts: {}, sig: '' });
+      g.parts[Number(p[2])] = p[5]; if (p[4]) g.sig = p[4];
+    });
+    if (!SPEC.key) SPEC.key = await crypto.subtle.importKey('raw', b64uDecode(SPEC.pub), ECDSA, false, ['verify']);
+    const vers = Object.keys(groups).map(Number).filter(v => v > (SPEC.ver || 0)).sort((a, b) => b - a);
+    for (const v of vers) {
+      const g = groups[v];
+      if (!g.sig || !(g.n > 0)) continue;
+      const parts = []; for (let k = 0; k < g.n; k++) parts.push(g.parts[k]);
+      if (parts.some(x => x == null)) continue;
+      const code = parts.join('');
+      try {
+        const ok = await crypto.subtle.verify(SIGN, SPEC.key, b64uDecode(g.sig), new TextEncoder().encode(v + '.' + code));
+        if (!ok) continue;
+        S = normalize(Object.assign(defaultState(), await decodeState(code)));
+        SPEC.ver = v; SNAP_AT = v; break;
+      } catch (e) { continue; }
+    }
+    SPEC.status = 'ok';
+  } catch (e) { SPEC.status = 'err'; }
+  SPEC.checked = Date.now();
+  render();
+}
+
 async function share() {
-  const payload = JSON.parse(JSON.stringify(S)); payload.sharedAt = Date.now();
-  const code = await encodeState(payload);
-  const url = location.href.split('#')[0] + '#view=' + code;
+  const base = location.href.split('#')[0];
+  const snap = await encodeState(JSON.parse(JSON.stringify(S)));
+  let url, live = false;
+  try {
+    await ensureLive();
+    await publishLive(true);
+    url = `${base}#live=${LIVE.topic}.${LIVE.pub}.${snap}`; live = true;
+    render();
+  } catch (e) {
+    url = `${base}#view=${snap}`;
+  }
   ui.shareUrl = url;
   const copied = await copyText(url);
   const modal = document.getElementById('modal');
   modal.innerHTML = `<div class="modal-box">
-    <h3>🔗 Enlace de solo lectura</h3>
+    <h3>${live ? '🔴 Enlace EN VIVO (solo lectura)' : '🔗 Enlace de solo lectura'}</h3>
     <p class="${copied ? '' : 'muted'}">${copied ? '✅ ¡Enlace copiado al portapapeles! Envíalo por WhatsApp, Telegram, etc.' : 'Copia el enlace manualmente:'}</p>
     <input class="inp" readonly id="shareUrl" value="${esc(url)}">
     <div class="row">
@@ -744,7 +854,7 @@ async function share() {
       <a class="btn ghost" href="${esc(url)}" target="_blank" rel="noopener">👁 Probar vista</a>
       <button class="btn ghost" data-act="closeModal">Cerrar</button>
     </div>
-    <p class="muted small" style="margin-bottom:0">El enlace guarda una <b>instantánea</b> del torneo en este momento (${url.length.toLocaleString()} caracteres). Cuando haya nuevos resultados, vuelve a pulsar «Compartir Vista» y envía el enlace actualizado.</p>
+    <p class="muted small" style="margin-bottom:0">${live ? 'Este enlace se <b>actualiza en vivo</b>: quienes lo abran verán los nuevos resultados al recargar la página (y solos cada 20 segundos). <b>Solo necesitas enviarlo una vez</b>; mantén esta página abierta mientras cargas resultados.' : 'El enlace guarda una <b>instantánea</b> del torneo. Cuando haya nuevos resultados, vuelve a pulsar «Compartir Vista».'}</p>
   </div>`;
   modal.classList.remove('hidden');
   const inp = document.getElementById('shareUrl'); inp.addEventListener('focus', () => inp.select());
@@ -986,9 +1096,12 @@ function render() {
   const pill = document.getElementById('modePill');
   pill.className = 'pill ' + (READONLY ? 'spec' : 'org');
   pill.innerHTML = READONLY ? '👁 Modo Espectador (Solo lectura)' : '<span class="dot"></span> Modo Organizador';
-  document.getElementById('toolbar').innerHTML = READONLY ? '' : (S.phase === 'running'
+  const chip = (!READONLY && LIVE) ? `<span id="liveChip" class="live-chip ${ui.live || ''}" title="Los espectadores ven los cambios al recargar">${liveChipHtml()}</span>` : '';
+  document.getElementById('toolbar').innerHTML = READONLY ? '' : chip + (S.phase === 'running'
     ? '<button class="btn primary" data-act="share">🔗 Compartir Vista (Solo Lectura)</button><button class="btn danger" data-act="reset">↺ Reiniciar Torneo</button>' : '');
-  document.getElementById('banner').innerHTML = READONLY
+  document.getElementById('banner').innerHTML = READONLY && SPEC
+    ? `<div class="banner"><div class="inner live"><span>${SPEC.status === 'err' ? '⚠ Sin conexión con la transmisión en vivo; reintentando…' : (SPEC.ver ? `<b class="onair"><span class="ldot"></span> EN VIVO</b> Última actualización del organizador: <b>${new Date(SPEC.ver).toLocaleTimeString()}</b> · se actualiza sola cada 20 s` : '⏳ Conectando con la transmisión en vivo… (mostrando la versión del enlace)')}</span><span class="row" style="margin:0"><button class="btn" data-act="refreshLive">↻ Actualizar</button><button class="btn ghost" data-act="exitView">Salir de la vista</button></span></div></div>`
+    : READONLY
     ? `<div class="banner"><div class="inner"><span>👁 Estás viendo una instantánea${SNAP_AT ? ' del ' + new Date(SNAP_AT).toLocaleString() : ''}. Para ver resultados nuevos, pide al organizador un enlace actualizado.</span><button class="btn ghost" data-act="exitView">Salir de la vista</button></div></div>` : '';
   document.title = (S.phase === 'running' ? S.name + ' · ' : '') + 'Organizador de Torneos';
 
@@ -1063,9 +1176,10 @@ const ACTIONS = {
   async copyLink() { toast(await copyText(ui.shareUrl) ? '📋 Enlace copiado.' : 'No se pudo copiar: selecciona el texto y cópialo.'); },
   nativeShare() { navigator.share({ title: S.name, text: 'Sigue el torneo «' + S.name + '» en vivo:', url: ui.shareUrl }).catch(() => { }); },
   closeModal() { document.getElementById('modal').classList.add('hidden'); },
+  refreshLive() { if (SPEC) { SPEC.status = 'ok'; pollLive(); toast('↻ Buscando resultados nuevos…'); } },
   exitView() { history.replaceState(null, '', location.pathname + location.search); location.reload(); }
 };
-const READONLY_OK = new Set(['tab', 'closeModal', 'copyLink', 'nativeShare', 'exitView']);
+const READONLY_OK = new Set(['tab', 'closeModal', 'copyLink', 'nativeShare', 'exitView', 'refreshLive']);
 
 document.addEventListener('click', e => {
   if (e.target.id === 'modal') return ACTIONS.closeModal();
@@ -1106,6 +1220,19 @@ window.addEventListener('hashchange', () => location.reload());
 
 /* ---------- Inicio ---------- */
 (async function init() {
+  if (location.hash.startsWith('#live=')) {
+    READONLY = true;
+    const [topic, pub, snap] = location.hash.slice(6).split('.');
+    SPEC = { topic, pub, status: 'ok' };
+    S = defaultState();
+    if (snap) { try { S = normalize(Object.assign(defaultState(), await decodeState(snap))); } catch (e) { } }
+    render();
+    if (!(window.crypto && crypto.subtle)) { SPEC.status = 'err'; render(); return; }
+    await pollLive();
+    setInterval(() => { if (!document.hidden) pollLive(); }, 20000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) pollLive(); });
+    return;
+  }
   if (location.hash.startsWith('#view=')) {
     READONLY = true;
     try {
@@ -1119,6 +1246,8 @@ window.addEventListener('hashchange', () => location.reload());
     }
   } else {
     S = load();
+    LIVE = loadLive();
+    if (LIVE) { publishLive(true); setInterval(() => publishLive(true), 2 * 60 * 60 * 1000); }
   }
   render();
 })();
