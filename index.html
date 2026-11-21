@@ -186,6 +186,10 @@ select.inp option{background:#0b1c48}
   background:linear-gradient(180deg,rgba(240,199,94,.35),rgba(240,199,94,.1));border:1px solid var(--gold);box-shadow:0 0 30px rgba(240,199,94,.35)}
 .champ-card small{display:block;font-family:var(--fh);letter-spacing:.2em;text-transform:uppercase;color:var(--gold);font-size:11.5px}
 .champ-card span{display:block;font-size:20px;font-weight:700;font-family:var(--fh);letter-spacing:.04em;text-transform:uppercase;overflow-wrap:anywhere}
+.shuffle-anim .match{animation:shuf .6s cubic-bezier(.2,.8,.3,1.2) both}
+.shuffle-anim .round:nth-child(2) .match{animation-delay:.06s}.shuffle-anim .round:nth-child(3) .match{animation-delay:.12s}
+@keyframes shuf{0%{opacity:0;transform:rotateX(80deg) scale(.85)}100%{opacity:1;transform:none}}
+.sec-head h2{margin-right:auto}
 .swipe-hint{display:none;text-align:center;font-size:12.5px;color:var(--gold);margin:-4px 0 6px}
 @media (max-width:1300px){.swipe-hint{display:block}}
 .round-chips{display:flex;flex-direction:column;gap:6px;margin-top:10px;max-width:240px}
@@ -249,18 +253,6 @@ span.score{width:32px;flex:none;text-align:center;font-weight:800;font-family:va
 .sep{color:var(--mut)}
 .action-bar{margin-top:18px;display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between}
 
-/* ===== Escalera ===== */
-.ladder-top{display:grid;grid-template-columns:1.2fr 1fr 1.4fr;gap:14px;margin-bottom:18px}
-.kcard{border-color:rgba(240,199,94,.6);background:linear-gradient(150deg,rgba(240,199,94,.22),rgba(12,28,70,.95) 70%)}
-.big{font-size:24px;font-weight:700;margin:4px 0;overflow-wrap:anywhere;font-family:var(--fh);letter-spacing:.03em;text-transform:uppercase}
-.queue{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;max-height:110px;overflow:auto}
-.current-wrap{display:flex;flex-direction:column;align-items:center;gap:10px;padding:20px;margin-bottom:20px;border:1px dashed rgba(240,199,94,.45);border-radius:16px;background:rgba(6,16,44,.45)}
-.current-wrap .match{width:min(440px,100%)}
-.current-wrap .team{height:54px}
-.current-wrap .tname{font-size:17px}
-.ladder-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:24px 14px;margin-top:12px}
-.ladder-list .match{width:100%}
-.lstep{position:relative;padding-top:4px}
 
 /* ===== Pie ===== */
 .site-footer{max-width:1500px;margin:30px auto 0;padding:22px;border-top:1px solid rgba(240,199,94,.2);display:flex;flex-wrap:wrap;gap:14px 24px;align-items:center;justify-content:center;text-align:center;color:var(--mut);font-size:13px}
@@ -281,7 +273,6 @@ span.score{width:32px;flex:none;text-align:center;font-weight:800;font-family:va
 }
 @media (max-width:900px){
   .setup-grid{grid-template-columns:minmax(0,1fr)}
-  .ladder-top{grid-template-columns:1fr}
   .topbar{justify-content:center}
   .brand-title{max-width:70vw}
 }
@@ -345,8 +336,7 @@ const STORE_KEY = 'organizador-torneos-v1';
 const BYE = '__BYE__';
 const FORMAT_LABEL = {
   single: 'Eliminación Directa',
-  groups: 'Fase de Grupos + Eliminación Directa',
-  ladder: 'Escalera / Rey de la Pista'
+  groups: 'Fase de Grupos + Eliminación Directa'
 };
 const SAMPLE = ['Águilas', 'Tigres', 'Leones', 'Halcones', 'Pumas', 'Lobos', 'Toros', 'Cóndores'];
 
@@ -385,10 +375,15 @@ function save() {
   if (READONLY) return;
   try { localStorage.setItem(STORE_KEY, JSON.stringify(S)); } catch (e) { /* sin almacenamiento */ }
 }
+function normalize(o) {
+  if (o.format === 'ladder') o.format = 'single';
+  if (o.t && o.t.kind === 'ladder') { o.t = null; o.phase = 'setup'; }
+  return o;
+}
 function load() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
-    if (raw) { const o = JSON.parse(raw); if (o && o.v === 1) return Object.assign(defaultState(), o); }
+    if (raw) { const o = JSON.parse(raw); if (o && o.v === 1) return normalize(Object.assign(defaultState(), o)); }
   } catch (e) { }
   return defaultState();
 }
@@ -588,27 +583,6 @@ function standings(g) {
   return arr;
 }
 
-/* ---------- Escalera / Rey de la pista ---------- */
-function ladderResolve(t) {
-  const n = t.order.length; let king = t.order[0];
-  const rows = [];
-  for (let i = 1; i < n; i++) {
-    const m = t.matches[i - 1], ch = t.order[i], a = king;
-    const w = (a && (m.w === a || m.w === ch)) ? m.w : null;
-    rows.push({ i, a, b: ch, w, m });
-    king = w || null;
-  }
-  return { rows, champion: king };
-}
-function sanitizeLadder(t) {
-  let c = 0;
-  ladderResolve(t).rows.forEach(r => {
-    if (!r.a) { if (r.m.w) c++; r.m.w = null; r.m.sa = null; r.m.sb = null; }
-    else if (r.m.w && r.m.w !== r.w) { r.m.w = null; r.m.sa = null; r.m.sb = null; c++; }
-  });
-  return c;
-}
-
 /* ---------- Generación ---------- */
 function generate() {
   const n = S.teams.length;
@@ -625,8 +599,6 @@ function generate() {
     groups.forEach(g => g.matches = roundRobin(g.teams));
     S.t = { kind: 'groups', oddRule: S.oddRule, qualifiers: cfg.Q, groups, elim: null };
     ui.tab = 'groups';
-  } else {
-    S.t = { kind: 'ladder', order: ids, matches: ids.slice(1).map(() => ({ sa: null, sb: null, w: null })) };
   }
   S.phase = 'running'; ui.llSel = [];
   afterChange();
@@ -665,23 +637,12 @@ function getCtx(scope, id) {
         return true;
       } };
   }
-  if (scope === 'ladder') {
-    const L = ladderResolve(t), row = L.rows[Number(id) - 1];
-    if (!row) return null;
-    return { scope, m: row.m, a: row.a, b: row.b, row, guard: () => true };
-  }
   if (scope === 'group') {
     const [gi, mid] = id.split(':');
     const m = t.groups[Number(gi)].matches.find(x => x.id === mid);
     return { scope, m, a: m.a, b: m.b, guard() { if (t.elim) { toast('Los grupos están bloqueados: la eliminatoria ya fue generada.'); return false; } return true; } };
   }
   return null;
-}
-function ladderAfter(ctx, oldW) {
-  if (ctx.scope !== 'ladder' || ctx.m.w === oldW) return;
-  let c = 0;
-  S.t.matches.forEach((m, k) => { if (k >= Number(ctx.row.i) && (m.w || m.sa != null)) { if (m.w) c++; m.w = null; m.sa = null; m.sb = null; } });
-  if (c) toast(`Cambió el rey de la pista: se limpiaron ${c} resultado(s) posteriores.`);
 }
 function setWinner(scope, id, team) {
   const ctx = getCtx(scope, id);
@@ -694,7 +655,6 @@ function setWinner(scope, id, team) {
     const ws = m.w === ctx.a ? m.sa : m.sb, ls = m.w === ctx.a ? m.sb : m.sa;
     if (ws < ls) { m.sa = null; m.sb = null; }
   }
-  ladderAfter(ctx, oldW);
   afterChange();
 }
 function setScore(scope, id, side, raw) {
@@ -713,14 +673,12 @@ function setScore(scope, id, side, raw) {
     else if (m.sb > m.sa) m.w = ctx.b;
     else if (!m.w) toast('Empate: haz clic en el nombre del ganador (ej. por penales).');
   }
-  ladderAfter(ctx, oldW);
   afterChange();
 }
 function afterChange() {
   let cleared = 0;
   if (S.t) {
     if (S.t.elim) cleared += sanitizeElim(S.t.elim);
-    if (S.t.kind === 'ladder') cleared += sanitizeLadder(S.t);
     const e = S.t.elim;
     if (e && e.mode === 'lucky') {
       const st = luckyStatus(e);
@@ -858,7 +816,8 @@ function renderElim(elim) {
     <div class="round-body"><div class="mw"><div class="center-stack"><div class="trophy-wrap">${TROPHY_SVG}</div>
     ${fm ? duel(fm, last, 'final') : '<div class="match final ghost"><div class="team"><span class="tname"><i>Finalista 1</i></span></div><div class="team"><span class="tname"><i>Finalista 2</i></span></div></div>'}
     ${champ ? `<div class="champ-card"><small>Campeón</small><span>${esc(teamName(champ))}</span></div>` : ''}</div></div></div></div>`;
-  let h = `<div class="swipe-hint">👈 Desliza para ver todas las llaves 👉</div><div class="bracket-scroll" data-scroll="elim"><div class="bracket ${classic ? 'lines' : 'free'}">`;
+  const anim = ui.anim ? ' shuffle-anim' : '';
+  let h = `<div class="swipe-hint">👈 Desliza para ver todas las llaves 👉</div><div class="bracket-scroll" data-scroll="elim"><div class="bracket ${classic ? 'lines' : 'free'}${anim}">`;
   if (side.length) h += `<div class="half">${left}</div>`;
   h += center;
   if (side.length) h += `<div class="half">${right}</div>`;
@@ -933,27 +892,6 @@ function renderGroups() {
   }
   return h + '</div>';
 }
-function renderLadder() {
-  const t = S.t, L = ladderResolve(t), n = t.order.length;
-  const cur = L.rows.find(r => r.a && !r.w);
-  const king = cur ? cur.a : L.champion;
-  let streak = 0;
-  for (let k = L.rows.length - 1; k >= 0; k--) { const r = L.rows[k]; if (!r.w) continue; if (r.w === king) streak++; else break; }
-  const queue = cur ? t.order.slice(cur.i + 1) : [];
-  const nm = id => id ? esc(teamName(id)) : '—';
-  let h = `<div class="ladder-top">
-    <div class="card kcard"><div class="muted small">👑 ${L.champion ? 'Campeón' : 'En cancha (rey de la pista)'}</div><div class="big">${nm(king)}</div><div class="muted small">${streak} ${plural(streak, 'victoria seguida', 'victorias seguidas')}</div></div>
-    <div class="card"><div class="muted small">⚔️ Retador actual</div><div class="big">${cur ? nm(cur.b) : '—'}</div><div class="muted small">${cur ? `Partido ${cur.i} de ${n - 1}` : 'Escalera completada'}</div></div>
-    <div class="card"><div class="muted small">⏳ En espera (${queue.length})</div><div class="queue">${queue.length ? queue.map((id, k) => `<span class="chip">${k + 1}. ${nm(id)}</span>`).join('') : '<span class="muted small">Nadie en cola</span>'}</div></div>
-  </div>`;
-  const duel = r => renderDuel({ scope: 'ladder', id: String(r.i), a: r.a, b: r.b,
-    la: r.a ? nm(r.a) + (r.i === 1 ? '' : ' <span class="tag">👑</span>') : `<i>Ganador del partido ${r.i - 1}</i>`,
-    lb: nm(r.b), sa: r.m.sa, sb: r.m.sb, w: r.w, num: r.i });
-  if (cur) h += `<div class="current-wrap"><h3>⚔️ Partido actual</h3>${duel(cur)}${READONLY ? '' : '<div class="hint">Clic en el ganador o escribe el marcador. El ganador se queda en cancha.</div>'}</div>`;
-  h += `<div class="sec-head" style="margin-top:6px"><h2>Recorrido de la escalera</h2><span class="hint">${L.rows.filter(r => r.w).length}/${n - 1} partidos jugados</span></div>
-    <div class="ladder-list">${L.rows.map(r => `<div class="lstep">${duel(r)}</div>`).join('')}</div>`;
-  return h;
-}
 function oddRuleBlock(count) {
   if (count < 2) return '';
   if (isPow2(count)) return `<div class="notice ok">✓ ${count} equipos es potencia de 2: llaves perfectas, no se necesitan pases directos.</div>`;
@@ -968,8 +906,7 @@ function oddRuleBlock(count) {
 function renderSetup() {
   const n = S.teams.length;
   const fm = [['single', '🏁', 'Eliminación Directa', 'Todos los equipos van directo al árbol de llaves.'],
-              ['groups', '📊', 'Fase de Grupos + Eliminación Directa', 'Grupos equilibrados, todos contra todos, tabla en tiempo real y clasificados a llaves.'],
-              ['ladder', '👑', 'Escalera / Rey de la Pista', 'Orden sorteado: el ganador se queda en cancha y espera al siguiente retador.']];
+              ['groups', '📊', 'Fase de Grupos + Eliminación Directa', 'Grupos equilibrados, todos contra todos, tabla en tiempo real y clasificados a llaves.']];
   let opts = '', valid = n >= 2;
   if (S.format === 'single') opts = oddRuleBlock(n);
   else if (S.format === 'groups') {
@@ -1013,7 +950,6 @@ function renderSetup() {
 }
 function championId() {
   const t = S.t; if (!t) return null;
-  if (t.kind === 'ladder') return ladderResolve(t).champion;
   return elimChampion(t.elim);
 }
 function renderRunning() {
@@ -1022,16 +958,15 @@ function renderRunning() {
   const ch = championId();
   if (ch) h += `<div class="champion-banner"><span class="tro">🏆</span><div><small>Campeón del torneo</small><b>${esc(teamName(ch))}</b></div></div>`;
   const hint = READONLY ? '' : '<span class="hint">💡 Haz clic en el nombre del ganador o escribe el marcador.</span>';
+  const shuffleBtn = READONLY ? '' : '<button class="btn primary" data-act="reshuffle" title="Vuelve a sortear quién juega contra quién">🔀 Reordenar enfrentamientos al azar</button>';
   if (t.kind === 'elim') {
-    h += `<div class="sec-head"><h2>Llaves</h2>${hint}</div>` + renderElim(t.elim);
+    h += `<div class="sec-head"><h2>Llaves</h2>${shuffleBtn}${hint}</div>` + renderElim(t.elim);
   } else if (t.kind === 'groups') {
     if (ui.tab === 'elim' && !t.elim) ui.tab = 'groups';
     h += `<div class="tabs"><button class="tab ${ui.tab === 'groups' ? 'on' : ''}" data-act="tab" data-tab="groups">📊 Fase de Grupos</button>
       <button class="tab ${ui.tab === 'elim' ? 'on' : ''}" data-act="tab" data-tab="elim" ${t.elim ? '' : 'disabled'}>🏁 Eliminatoria${t.elim ? '' : ' (pendiente)'}</button></div>`;
-    h += ui.tab === 'elim' ? `<div class="sec-head"><h2>Fase eliminatoria</h2>${hint}</div>` + renderElim(t.elim)
+    h += ui.tab === 'elim' ? `<div class="sec-head"><h2>Fase eliminatoria</h2>${shuffleBtn}${hint}</div>` + renderElim(t.elim)
                            : (READONLY || t.elim ? '' : '<div class="sec-head"><span class="hint">💡 Escribe los marcadores; la tabla se actualiza al instante.</span></div>') + renderGroups();
-  } else {
-    h += renderLadder();
   }
   return h;
 }
@@ -1057,7 +992,8 @@ function render() {
     ? `<div class="banner"><div class="inner"><span>👁 Estás viendo una instantánea${SNAP_AT ? ' del ' + new Date(SNAP_AT).toLocaleString() : ''}. Para ver resultados nuevos, pide al organizador un enlace actualizado.</span><button class="btn ghost" data-act="exitView">Salir de la vista</button></div></div>` : '';
   document.title = (S.phase === 'running' ? S.name + ' · ' : '') + 'Organizador de Torneos';
 
-  document.getElementById('app').innerHTML = S.phase === 'setup' ? (READONLY ? renderSpecSetup() : renderSetup()) : renderRunning();
+  const html = S.phase === 'setup' ? (READONLY ? renderSpecSetup() : renderSetup()) : renderRunning();
+  document.getElementById('app').innerHTML = html; ui.anim = false;
 
   document.querySelectorAll('[data-scroll]').forEach(el => { const k = el.dataset.scroll; el.scrollLeft = scrolls[k] != null ? scrolls[k] : Math.max(0, (el.scrollWidth - el.clientWidth) / 2); });
   if (fk) { const el = document.querySelector(`[data-fk="${cssEsc(fk)}"]`); if (el) { el.focus({ preventScroll: true }); if (el.select) el.select(); } }
@@ -1105,6 +1041,19 @@ const ACTIONS = {
     const e = S.t.elim, st = luckyStatus(e); if (!st.complete) return;
     e.rounds.push(makeDynamicRound(shuffle(st.survivors), []));
     ui.llSel = []; afterChange(); toast(st.survivors.length % 2 ? 'Siguiente ronda sorteada: un equipo pasa directo.' : 'Siguiente ronda sorteada.');
+  },
+  reshuffle() {
+    const t = S.t, e = t && t.elim; if (!e) return;
+    const hasRes = (e.mode === 'lucky' && e.rounds.length > 1) || e.rounds.some(r => r.matches.some(m => m.w || m.sa != null || m.sb != null));
+    if (hasRes && !confirm('Se borrarán los resultados ya cargados en las llaves. ¿Reordenar los enfrentamientos al azar?')) return;
+    const r0 = e.rounds[0];
+    const ids = r0.matches.flatMap(m => [m.a, m.b]).filter(s => s.t === 'team').map(s => s.id).concat(r0.byes || []);
+    let groupOf = null;
+    if (t.kind === 'groups') { groupOf = {}; t.groups.forEach((g, gi) => g.teams.forEach(id => groupOf[id] = gi)); }
+    t.elim = buildElim(shuffle(ids), t.oddRule, groupOf, e.tags);
+    ui.llSel = []; ui.anim = true;
+    afterChange();
+    toast('🔀 ¡Enfrentamientos reordenados al azar!');
   },
   share,
   reset() {
@@ -1162,7 +1111,7 @@ window.addEventListener('hashchange', () => location.reload());
     try {
       const obj = await decodeState(location.hash.slice(6));
       SNAP_AT = obj.sharedAt || null;
-      S = Object.assign(defaultState(), obj);
+      S = normalize(Object.assign(defaultState(), obj));
     } catch (e) {
       S = defaultState(); render();
       document.getElementById('app').innerHTML = '<div class="card empty-state"><div class="e">⚠️</div><h2 style="justify-content:center">Enlace no válido</h2><p>No se pudo leer el torneo compartido. Pide al organizador que lo copie de nuevo.</p></div>';
