@@ -1265,6 +1265,13 @@ document.addEventListener('keydown', e => {
 window.addEventListener('hashchange', () => location.reload());
 
 /* ---------- Inicio ---------- */
+/* Si el navegador abrió una versión vieja guardada en caché, recarga la nueva (una sola vez). */
+const APP_VER = '2026-11-21b';
+fetch(location.pathname + '?nc=' + Date.now(), { cache: 'no-store' }).then(r => r.text()).then(t => {
+  const m = t.match(/const APP_VER = '([^']+)'/);
+  let tried = null; try { tried = sessionStorage.getItem('trn-upd'); } catch (e) { }
+  if (m && m[1] !== APP_VER && tried !== m[1]) { try { sessionStorage.setItem('trn-upd', m[1]); } catch (e) { } location.reload(); }
+}).catch(() => { });
 (async function init() {
   if (/^#v=[\w-]{16}$/.test(location.hash)) {
     READONLY = true;
