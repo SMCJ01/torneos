@@ -958,7 +958,7 @@ function renderRunning() {
   const ch = championId();
   if (ch) h += `<div class="champion-banner"><span class="tro">🏆</span><div><small>Campeón del torneo</small><b>${esc(teamName(ch))}</b></div></div>`;
   const hint = READONLY ? '' : '<span class="hint">💡 Haz clic en el nombre del ganador o escribe el marcador.</span>';
-  const shuffleBtn = READONLY ? '' : '<button class="btn primary" data-act="reshuffle" title="Vuelve a sortear quién juega contra quién">🔀 Reordenar enfrentamientos al azar</button>';
+  const shuffleBtn = READONLY ? '' : '<button class="btn primary" data-act="reshuffle" title="Vuelve a sortear quién juega contra quién">🔀 Chocolatear</button>';
   if (t.kind === 'elim') {
     h += `<div class="sec-head"><h2>Llaves</h2>${shuffleBtn}${hint}</div>` + renderElim(t.elim);
   } else if (t.kind === 'groups') {
@@ -1053,7 +1053,7 @@ const ACTIONS = {
     t.elim = buildElim(shuffle(ids), t.oddRule, groupOf, e.tags);
     ui.llSel = []; ui.anim = true;
     afterChange();
-    toast('🔀 ¡Enfrentamientos reordenados al azar!');
+    toast('🔀 ¡Llaves chocolateadas!');
   },
   share,
   reset() {
