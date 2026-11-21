@@ -1105,9 +1105,9 @@ function render() {
   document.getElementById('toolbar').innerHTML = READONLY ? '' : chip + (S.phase === 'running'
     ? '<button class="btn primary" data-act="share">🔗 Compartir Vista (Solo Lectura)</button><button class="btn danger" data-act="reset">↺ Reiniciar Torneo</button>' : '');
   document.getElementById('banner').innerHTML = READONLY && SPEC
-    ? `<div class="banner"><div class="inner live"><span class="row" style="margin:0 0 0 auto"><button class="btn" data-act="refreshLive">↻ Actualizar</button><button class="btn ghost" data-act="exitView">Salir de la vista</button></span></div></div>`
+    ? `<div class="banner"><div class="inner live"><span class="row" style="margin:0 0 0 auto"><button class="btn" data-act="refreshLive">↻ Actualizar</button></span></div></div>`
     : READONLY
-    ? `<div class="banner"><div class="inner"><span>👁 Estás viendo una instantánea${SNAP_AT ? ' del ' + new Date(SNAP_AT).toLocaleString() : ''}. Para ver resultados nuevos, pide al organizador un enlace actualizado.</span><button class="btn ghost" data-act="exitView">Salir de la vista</button></div></div>` : '';
+    ? `<div class="banner"><div class="inner"><span>👁 Estás viendo una instantánea${SNAP_AT ? ' del ' + new Date(SNAP_AT).toLocaleString() : ''}. Para ver resultados nuevos, pide al organizador un enlace actualizado.</span></div></div>` : '';
   document.title = (S.phase === 'running' ? S.name + ' · ' : '') + 'Organizador de Torneos';
 
   const html = S.phase === 'setup' ? (READONLY ? renderSpecSetup() : renderSetup()) : renderRunning();
@@ -1190,7 +1190,7 @@ const ACTIONS = {
   refreshLive() { if (SPEC) { SPEC.status = 'ok'; pollLive(); toast('↻ Buscando resultados nuevos…'); } },
   exitView() { history.replaceState(null, '', location.pathname + location.search); location.reload(); }
 };
-const READONLY_OK = new Set(['tab', 'closeModal', 'copyLink', 'nativeShare', 'exitView', 'refreshLive']);
+const READONLY_OK = new Set(['tab', 'closeModal', 'copyLink', 'nativeShare', 'refreshLive']);
 
 let pointerIsDown = false, holdRender = false, renderPending = false;
 document.addEventListener('pointerdown', () => { pointerIsDown = true; }, true);
