@@ -1101,11 +1101,11 @@ function render() {
   const pill = document.getElementById('modePill');
   pill.className = 'pill ' + (READONLY ? 'spec' : 'org');
   pill.innerHTML = READONLY ? '👁 Modo Espectador (Solo lectura)' : '<span class="dot"></span> Modo Organizador';
-  const chip = (!READONLY && LIVE) ? `<span id="liveChip" class="live-chip ${ui.live || ''}" title="Los espectadores ven los cambios al recargar">${liveChipHtml()}</span>` : '';
+  const chip = '';
   document.getElementById('toolbar').innerHTML = READONLY ? '' : chip + (S.phase === 'running'
     ? '<button class="btn primary" data-act="share">🔗 Compartir Vista (Solo Lectura)</button><button class="btn danger" data-act="reset">↺ Reiniciar Torneo</button>' : '');
   document.getElementById('banner').innerHTML = READONLY && SPEC
-    ? `<div class="banner"><div class="inner live"><span>${SPEC.status === 'err' ? '⚠ Sin conexión con la transmisión en vivo; reintentando…' : (SPEC.ver ? `<b class="onair"><span class="ldot"></span> EN VIVO</b> Última actualización del organizador: <b>${new Date(SPEC.ver).toLocaleTimeString()}</b> · se actualiza sola cada 20 s` : '⏳ Conectando con la transmisión en vivo… (mostrando la versión del enlace)')}</span><span class="row" style="margin:0"><button class="btn" data-act="refreshLive">↻ Actualizar</button><button class="btn ghost" data-act="exitView">Salir de la vista</button></span></div></div>`
+    ? `<div class="banner"><div class="inner live"><span class="row" style="margin:0 0 0 auto"><button class="btn" data-act="refreshLive">↻ Actualizar</button><button class="btn ghost" data-act="exitView">Salir de la vista</button></span></div></div>`
     : READONLY
     ? `<div class="banner"><div class="inner"><span>👁 Estás viendo una instantánea${SNAP_AT ? ' del ' + new Date(SNAP_AT).toLocaleString() : ''}. Para ver resultados nuevos, pide al organizador un enlace actualizado.</span><button class="btn ghost" data-act="exitView">Salir de la vista</button></div></div>` : '';
   document.title = (S.phase === 'running' ? S.name + ' · ' : '') + 'Organizador de Torneos';
