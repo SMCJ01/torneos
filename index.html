@@ -200,6 +200,15 @@ select.inp option{background:#0b1c48}
 .swipe-hint{display:none;text-align:center;font-size:12.5px;color:var(--gold);margin:-4px 0 6px}
 @media (max-width:1300px){.swipe-hint{display:block}}
 .round-chips{display:flex;flex-direction:column;gap:6px;margin-top:10px;max-width:240px}
+/* ===== Selector de deporte ===== */
+.sport-switch{display:inline-flex;padding:3px;border-radius:999px;background:rgba(6,16,44,.7);border:1px solid var(--bd2)}
+.sport-switch a{padding:6px 14px;border-radius:999px;font-weight:700;font-size:13.5px;color:var(--mut);text-decoration:none;white-space:nowrap;transition:color .15s}
+.sport-switch a:hover{color:var(--tx)}
+.sport-switch a.on{color:#1a1200;background:linear-gradient(180deg,#ffe39a,#f0c75e 50%,#c9962f)}
+/* ===== Edición manual de llaves ===== */
+.editing .match{border-style:dashed;border-color:var(--gold)}
+select.slot{width:100%;padding:4px 6px;font-size:13.5px;font-weight:600;background:#081536}
+.chip select.slot{width:auto;max-width:150px}
 
 /* ===== Tarjeta de partido ===== */
 .match{width:240px;position:relative;border-radius:12px;background:linear-gradient(180deg,#1b3373,#0e1f50);border:1px solid rgba(240,199,94,.32);
@@ -323,6 +332,7 @@ span.score{width:32px;flex:none;text-align:center;font-weight:800;font-family:va
     <div class="sis-logo" title="Ingeniería de Sistemas e Informática"><img src="img/sistemas.png" alt="Ingeniería de Sistemas e Informática - UDH"><span class="sis-text"><b>Ingeniería de Sistemas</b>e Informática</span></div>
   </div>
   <div class="top-right">
+    <nav class="sport-switch" id="sportSwitch" aria-label="Deporte"><a data-sp="futbol" href="./">⚽ Fútbol</a><a data-sp="voley" href="./?deporte=voley">🏐 Vóley</a></nav>
     <span id="modePill" class="pill org"></span>
     <div id="toolbar" class="toolbar"></div>
   </div>
@@ -341,23 +351,33 @@ span.score{width:32px;flex:none;text-align:center;font-weight:800;font-family:va
 /* =========================================================
    ORGANIZADOR DE TORNEOS — Vanilla JS, un solo archivo
    ========================================================= */
-const STORE_KEY = 'organizador-torneos-v1';
+/* Cada deporte es una sección independiente (sus propios equipos, llaves y enlace en vivo). */
+const SPORTS = {
+  futbol: { key: 'futbol', name: 'Fútbol', ic: '⚽', unit: 'goles', draws: true, crit: 'PTS → DG → GF',
+            cols: [['GF', 'Goles a favor'], ['GC', 'Goles en contra'], ['DG', 'Diferencia de goles']],
+            sample: ['Águilas', 'Tigres', 'Leones', 'Halcones', 'Pumas', 'Lobos', 'Toros', 'Cóndores'] },
+  voley:  { key: 'voley', name: 'Vóley', ic: '🏐', unit: 'sets', draws: false, crit: 'PTS → G → DS → SF',
+            cols: [['SF', 'Sets a favor'], ['SC', 'Sets en contra'], ['DS', 'Diferencia de sets']],
+            sample: ['Panteras', 'Delfines', 'Gacelas', 'Jaguares', 'Tiburones', 'Gaviotas', 'Linces', 'Pumas'] }
+};
+const URL_SPORT = new URLSearchParams(location.search).get('deporte') === 'voley' ? 'voley' : 'futbol';
+const STORE_KEY = URL_SPORT === 'voley' ? 'organizador-torneos-voley-v1' : 'organizador-torneos-v1';
 const BYE = '__BYE__';
 const FORMAT_LABEL = {
   single: 'Eliminación Directa',
   groups: 'Fase de Grupos + Eliminación Directa'
 };
-const SAMPLE = ['Águilas', 'Tigres', 'Leones', 'Halcones', 'Pumas', 'Lobos', 'Toros', 'Cóndores'];
+const SP = () => SPORTS[(S && S.sport) || URL_SPORT] || SPORTS.futbol;
 
 let S = null;            // estado del torneo
 let READONLY = false;    // modo espectador
 let SNAP_AT = null;      // fecha de la instantánea compartida
 let teamMap = {};
-const ui = { tab: 'groups', editId: null, llSel: [], focus: null, shareUrl: '' };
+const ui = { tab: 'groups', editId: null, llSel: [], focus: null, shareUrl: '', edit: false };
 
 /* ---------- Utilidades ---------- */
 function defaultState() {
-  return { v: 1, name: 'Mi Torneo', phase: 'setup', teams: [], seq: 1, format: 'single',
+  return { v: 1, sport: URL_SPORT, name: URL_SPORT === 'voley' ? 'Torneo de Vóley' : 'Mi Torneo', phase: 'setup', teams: [], seq: 1, format: 'single',
            oddRule: 'bye', groupCount: null, qualifiers: 2, t: null };
 }
 function uid(p) { return p + (S.seq++).toString(36); }
@@ -440,12 +460,13 @@ function fixConflicts(pairs, groupOf) {
 const newMatch = (a, b) => ({ id: uid('m'), a, b, sa: null, sb: null, w: null });
 
 /* Llave clásica con BYE: los "seeds" altos (o sorteados) reciben el pase directo */
-function buildBracketBye(ids, groupOf) {
+function buildBracketBye(ids, groupOf, seq) {
   const n = ids.length, size = nextPow2(n), order = seedOrder(size);
   const src = s => s <= n ? { t: 'team', id: ids[s - 1] } : { t: 'bye' };
   const r0 = [];
-  for (let i = 0; i < size; i += 2) r0.push(newMatch(src(order[i]), src(order[i + 1])));
-  if (groupOf) {
+  if (seq) for (let i = 0; i + 1 < n; i += 2) r0.push(newMatch({ t: 'team', id: ids[i] }, { t: 'team', id: ids[i + 1] }));
+  else for (let i = 0; i < size; i += 2) r0.push(newMatch(src(order[i]), src(order[i + 1])));
+  if (groupOf && !seq) {
     const full = r0.filter(m => m.a.t === 'team' && m.b.t === 'team');
     const pairs = full.map(m => [m.a.id, m.b.id]);
     fixConflicts(pairs, groupOf);
@@ -461,20 +482,26 @@ function buildBracketBye(ids, groupOf) {
   return { mode: 'bye', rounds };
 }
 /* Ronda dinámica (modo Mejor Perdedor) */
-function makeDynamicRound(entrants, ll, groupOf) {
-  const list = entrants.slice(), byes = [];
-  if (list.length % 2) byes.push(list.shift());
-  const pairs = [], L = list.length;
-  for (let i = 0; i < L / 2; i++) pairs.push([list[i], list[L - 1 - i]]);
-  if (groupOf) fixConflicts(pairs, groupOf);
+function makeDynamicRound(entrants, ll, groupOf, seq) {
+  const list = entrants.slice(), byes = [], pairs = [];
+  if (seq) { // en orden: 1 vs 2, 3 vs 4…; si es impar, el último pasa directo
+    if (list.length % 2) byes.push(list.pop());
+    for (let i = 0; i < list.length; i += 2) pairs.push([list[i], list[i + 1]]);
+  } else {
+    if (list.length % 2) byes.push(list.shift());
+    const L = list.length;
+    for (let i = 0; i < L / 2; i++) pairs.push([list[i], list[L - 1 - i]]);
+    if (groupOf) fixConflicts(pairs, groupOf);
+  }
   return { matches: pairs.map(p => newMatch({ t: 'team', id: p[0] }, { t: 'team', id: p[1] })), byes, ll: ll || [] };
 }
-function buildElim(ids, rule, groupOf, tags) {
+function buildElim(ids, rule, groupOf, tags, seq) {
   let e;
   /* Potencia de 2: llave clásica. Si no: juegan todos los equipos posibles en cada ronda
-     (10 equipos = 5 partidos); si sobra uno impar, pasa directo (bye) o se completa con mejor perdedor. */
-  if (isPow2(ids.length)) e = buildBracketBye(ids, groupOf);
-  else e = { mode: 'lucky', rule: rule === 'bye' ? 'bye' : 'lucky', rounds: [makeDynamicRound(ids, [], groupOf)] };
+     (10 equipos = 5 partidos); si sobra uno impar, pasa directo (bye) o se completa con mejor perdedor.
+     seq = true: sin sorteo, en el orden recibido (para armar las llaves a mano). */
+  if (isPow2(ids.length)) e = buildBracketBye(ids, groupOf, seq);
+  else e = { mode: 'lucky', rule: rule === 'bye' ? 'bye' : 'lucky', rounds: [makeDynamicRound(ids, [], groupOf, seq)] };
   if (tags) e.tags = tags;
   return e;
 }
@@ -576,30 +603,41 @@ function roundRobin(list) {
   }
   return out;
 }
+/* Fútbol: G=3, E=1, P=0 (gf/gc = goles).
+   Vóley: sin empates (gf/gc = sets). Ganar sin ceder o con 2+ sets de diferencia (2-0, 3-0, 3-1) = 3 pts;
+   ganar ajustado (2-1, 3-2) = 2 pts y el perdedor 1 pt. */
 function standings(g) {
-  const rows = {};
+  const sp = SP(), rows = {};
   g.teams.forEach(id => rows[id] = { id, pj: 0, g: 0, e: 0, p: 0, gf: 0, gc: 0, dg: 0, pts: 0 });
   g.matches.forEach(m => {
     if (m.sa == null || m.sb == null) return;
+    if (!sp.draws && m.sa === m.sb) return; // marcador inválido en vóley
     const A = rows[m.a], B = rows[m.b];
     A.pj++; B.pj++; A.gf += m.sa; A.gc += m.sb; B.gf += m.sb; B.gc += m.sa;
-    if (m.sa > m.sb) { A.g++; B.p++; A.pts += 3; }
-    else if (m.sa < m.sb) { B.g++; A.p++; B.pts += 3; }
-    else { A.e++; B.e++; A.pts++; B.pts++; }
+    if (m.sa === m.sb) { A.e++; B.e++; A.pts++; B.pts++; return; }
+    const W = m.sa > m.sb ? A : B, L = W === A ? B : A, ws = Math.max(m.sa, m.sb), ls = Math.min(m.sa, m.sb);
+    W.g++; L.p++;
+    if (sp.draws) W.pts += 3;
+    else { const tight = ws - ls === 1 && ls > 0; W.pts += tight ? 2 : 3; L.pts += tight ? 1 : 0; }
   });
   const arr = Object.values(rows);
   arr.forEach(r => r.dg = r.gf - r.gc);
-  arr.sort((x, y) => y.pts - x.pts || y.dg - x.dg || y.gf - x.gf || teamName(x.id).localeCompare(teamName(y.id)));
+  const byName = (x, y) => teamName(x.id).localeCompare(teamName(y.id));
+  arr.sort(sp.draws
+    ? (x, y) => y.pts - x.pts || y.dg - x.dg || y.gf - x.gf || byName(x, y)
+    : (x, y) => y.pts - x.pts || y.g - x.g || y.dg - x.dg || y.gf - x.gf || byName(x, y));
   return arr;
 }
 
 /* ---------- Generación ---------- */
-function generate() {
+function generate(manual) {
+  manual = manual === true && S.format === 'single';
   const n = S.teams.length;
   if (n < 2) return toast('Agrega al menos 2 participantes.');
-  const ids = shuffle(S.teams.map(t => t.id));
+  const ids = manual ? S.teams.map(t => t.id) : shuffle(S.teams.map(t => t.id));
+  ui.edit = manual;
   if (S.format === 'single') {
-    S.t = { kind: 'elim', oddRule: S.oddRule, elim: buildElim(ids, S.oddRule) };
+    S.t = { kind: 'elim', oddRule: S.oddRule, elim: buildElim(ids, S.oddRule, null, null, manual) };
   } else if (S.format === 'groups') {
     const cfg = groupCfg();
     if (!cfg.ok) return toast(cfg.msg);
@@ -612,7 +650,7 @@ function generate() {
   }
   S.phase = 'running'; ui.llSel = [];
   afterChange();
-  toast('🎲 ¡Sorteo realizado! Torneo generado.');
+  toast(manual ? '✍ Elige qué equipo va en cada casilla de la ronda 1 y pulsa «Listo».' : '🎲 ¡Sorteo realizado! Torneo generado.');
   window.scrollTo(0, 0);
 }
 function genKnockout() {
@@ -682,8 +720,32 @@ function setScore(scope, id, side, raw) {
   if (scope !== 'group' && m.sa != null && m.sb != null) {
     if (m.sa > m.sb) m.w = ctx.a;
     else if (m.sb > m.sa) m.w = ctx.b;
-    else if (!m.w) toast('Empate: haz clic en el nombre del ganador (ej. por penales).');
+    else if (!m.w) toast(SP().draws ? 'Empate: haz clic en el nombre del ganador (ej. por penales).' : 'En vóley no hay empate: revisa los sets o haz clic en el ganador.');
   }
+  if (scope === 'group' && !SP().draws && m.sa != null && m.sa === m.sb) toast('En vóley no hay empates: corrige los sets de este partido.');
+  afterChange();
+}
+/* ---------- Llaves a mano (ronda 1) ---------- */
+function r0Slots(elim) {
+  const r0 = elim.rounds[0], out = [];
+  r0.matches.forEach(m => ['a', 'b'].forEach(s => {
+    if (m[s].t === 'team') out.push({ key: m.id + ':' + s, m, get: () => m[s].id, set: v => { m[s].id = v; } });
+  }));
+  (r0.byes || []).forEach((_, k) => out.push({ key: 'bye:' + k, m: null, get: () => r0.byes[k], set: v => { r0.byes[k] = v; } }));
+  return out;
+}
+/* Pone el equipo elegido en la casilla; el equipo que estaba allí ocupa el lugar que deja el elegido. */
+function setSlot(key, teamId) {
+  const e = S.t && S.t.elim; if (!e) return;
+  const slots = r0Slots(e), a = slots.find(s => s.key === key), b = slots.find(s => s.get() === teamId);
+  if (!a || !b || a === b) return render();
+  const touched = [a.m, b.m].filter(Boolean);
+  const later = e.mode === 'lucky' && e.rounds.length > 1;
+  const hasRes = later || touched.some(m => m.w || m.sa != null || m.sb != null);
+  if (hasRes && !confirm('Este cambio borrará el resultado de los partidos afectados (y de las rondas siguientes que dependan de ellos). ¿Continuar?')) return render();
+  const old = a.get(); a.set(teamId); b.set(old);
+  touched.forEach(m => { m.w = null; m.sa = null; m.sb = null; });
+  if (later) { e.rounds.length = 1; ui.llSel = []; }
   afterChange();
 }
 function afterChange() {
@@ -741,7 +803,7 @@ async function copyText(txt) {
 /* ---------- Vista EN VIVO (canal ntfy.sh + firma digital ECDSA) ----------
    El organizador publica cada cambio firmado con su clave privada (guardada solo en su navegador).
    El enlace del espectador lleva el canal + la clave pública: solo acepta datos con firma válida. */
-const LIVE_KEY = 'organizador-torneos-live';
+const LIVE_KEY = URL_SPORT === 'voley' ? 'organizador-torneos-live-voley' : 'organizador-torneos-live'; // canal en vivo propio por deporte
 const NTFY = 'https://ntfy.sh/';
 const CHUNK = 3500;
 const ECDSA = { name: 'ECDSA', namedCurve: 'P-256' }, SIGN = { name: 'ECDSA', hash: 'SHA-256' };
@@ -929,14 +991,25 @@ function renderElim(elim) {
   const centerFinal = last.matches.length === 1 && !(last.byes || []).length;
   const side = centerFinal ? R.slice(0, -1) : R;
   const entrantsOf = r => r.matches.length * 2 + (r.byes ? r.byes.length : 0);
+  /* Modo edición: cada casilla de la ronda 1 es un desplegable con todos los equipos de esa ronda */
+  const edit = ui.edit && !READONLY, r0 = R[0];
+  const r0ids = edit ? r0Slots(elim).map(s => s.get()).sort((x, y) => teamName(x).localeCompare(teamName(y))) : [];
+  const slotSel = (key, cur) => `<select class="inp sm slot" data-chg="slot" data-slot="${esc(key)}" aria-label="Equipo de esta casilla">${r0ids.map(id => `<option value="${esc(id)}"${id === cur ? ' selected' : ''}>${esc(teamName(id))}</option>`).join('')}</select>`;
   const duel = (m, r, cls) => {
     const llSet = new Set(r.ll || []);
     const tagOf = id => (id && id !== BYE ? (tags[id] ? `<span class="tag">${esc(tags[id])}</span>` : '') + (llSet.has(id) ? '<span class="tag ll" title="Mejor perdedor">LL</span>' : '') : '');
     const a = srcTeam(m.a, idx), b = srcTeam(m.b, idx), bye = m.a.t === 'bye' || m.b.t === 'bye';
-    return renderDuel({ scope: 'elim', id: m.id, a, b, la: label(m.a, a), lb: label(m.b, b), sa: m.sa, sb: m.sb,
-      w: bye ? (a === BYE ? b : a) : matchWinner(m, idx), num: nums[m.id], bye, ta: tagOf(a), tb: tagOf(b), cls });
+    const ed = edit && r === r0;
+    return renderDuel({ scope: 'elim', id: m.id, a, b,
+      la: ed && m.a.t === 'team' ? slotSel(m.id + ':a', a) : label(m.a, a),
+      lb: ed && m.b.t === 'team' ? slotSel(m.id + ':b', b) : label(m.b, b), sa: m.sa, sb: m.sb,
+      w: bye ? (a === BYE ? b : a) : matchWinner(m, idx), num: nums[m.id], bye, ta: ed ? '' : tagOf(a), tb: ed ? '' : tagOf(b), cls, locked: edit });
   };
-  const chips = (ids, cls, txt) => ids && ids.length ? `<div class="round-chips">${ids.map(id => `<span class="chip ${cls}">${txt} <b>${esc(teamName(id))}</b></span>`).join('')}</div>` : '';
+  const chips = (ids, cls, txt, r) => {
+    if (!ids || !ids.length) return '';
+    if (edit && r === r0 && cls === 'bye') return `<div class="round-chips">${ids.map((id, k) => `<span class="chip bye">${txt} ${slotSel('bye:' + k, id)}</span>`).join('')}</div>`;
+    return `<div class="round-chips">${ids.map(id => `<span class="chip ${cls}">${txt} <b>${esc(teamName(id))}</b></span>`).join('')}</div>`;
+  };
   const col = (r, ri, ms, cls, extra) => `<div class="round ${cls}"><div class="round-title"><b>${roundName(entrantsOf(r), ri)}</b><small>${roundName(entrantsOf(r), ri).startsWith('Ronda') ? '' : 'Ronda ' + (ri + 1) + ' · '}${r.matches.length} ${plural(r.matches.length, 'partido')}${(r.byes || []).length ? ' + pase' : ''}</small></div>
     <div class="round-body">${ms.map(m => `<div class="mw">${duel(m, r)}</div>`).join('')}${extra || ''}</div></div>`;
   let left = '', right = '';
@@ -944,7 +1017,7 @@ function renderElim(elim) {
     const half = Math.ceil(r.matches.length / 2);
     const toC = ri === side.length - 1 && centerFinal ? ' to-center' : '';
     left += col(r, ri, r.matches.slice(0, half), 'to-right' + toC + (ri > 0 ? ' from-left' : ''), classic ? '' : chips(r.ll, 'll', '♻ Mejor perdedor:'));
-    right = col(r, ri, r.matches.slice(half), 'to-left' + toC + (ri > 0 ? ' from-right' : ''), classic ? '' : chips(r.byes, 'bye', '⏭ Pase directo:')) + right;
+    right = col(r, ri, r.matches.slice(half), 'to-left' + toC + (ri > 0 ? ' from-right' : ''), classic ? '' : chips(r.byes, 'bye', '⏭ Pase directo:', r)) + right;
   });
   const fm = centerFinal ? last.matches[0] : null;
   const center = `<div class="round center-col"><div class="round-title"><b>🏆 Gran Final</b><small>${champ ? '¡Tenemos campeón!' : (fm ? 'Ronda ' + R.length : 'Por definir')}</small></div>
@@ -952,7 +1025,7 @@ function renderElim(elim) {
     ${fm ? duel(fm, last, 'final') : '<div class="match final ghost"><div class="team"><span class="tname"><i>Finalista 1</i></span></div><div class="team"><span class="tname"><i>Finalista 2</i></span></div></div>'}
     ${champ ? `<div class="champ-card"><small>Campeón</small><span>${esc(teamName(champ))}</span></div>` : ''}</div></div></div></div>`;
   const anim = ui.anim ? ' shuffle-anim' : '';
-  let h = `<div class="swipe-hint">👈 Desliza para ver todas las llaves 👉</div><div class="bracket-scroll" data-scroll="elim"><div class="bracket ${classic ? 'lines' : 'free'}${anim}">`;
+  let h = `<div class="swipe-hint">👈 Desliza para ver todas las llaves 👉</div><div class="bracket-scroll" data-scroll="elim"><div class="bracket ${classic ? 'lines' : 'free'}${anim}${edit ? ' editing' : ''}">`;
   if (side.length) h += `<div class="half">${left}</div>`;
   h += center;
   if (side.length) h += `<div class="half">${right}</div>`;
@@ -980,8 +1053,8 @@ function renderLuckyPanel(elim) {
   return `<div class="card ll-panel">
     <h2>♻ Completar la siguiente ronda</h2>
     <div class="hint">Avanzan <b>${st.survivors.length}</b> equipos. Para cuadrar una ronda de <b>${st.target}</b> se ${st.need === 1 ? 'necesita' : 'necesitan'}
-      <b>${st.need} ${plural(st.need, 'mejor perdedor', 'mejores perdedores')}</b>. Selecciónalo(s) manualmente o deja que el sistema lo calcule por diferencia de goles/puntos (desempate: goles a favor).</div>
-    <div class="table-wrap"><table class="ll-table"><thead><tr><th></th><th>#</th><th class="l">Perdedor</th><th>Dif.</th><th>GF</th><th class="l">Partido</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <b>${st.need} ${plural(st.need, 'mejor perdedor', 'mejores perdedores')}</b>. Selecciónalo(s) manualmente o deja que el sistema lo calcule por diferencia de ${SP().unit} (desempate: ${SP().unit} a favor).</div>
+    <div class="table-wrap"><table class="ll-table"><thead><tr><th></th><th>#</th><th class="l">Perdedor</th><th>Dif.</th><th>${SP().cols[0][0]}</th><th class="l">Partido</th></tr></thead><tbody>${rows}</tbody></table></div>
     <div class="row">
       <button class="btn" data-act="llAuto">🤖 Calcular automáticamente</button>
       <button class="btn primary" data-act="llConfirm" ${ui.llSel.length === st.need ? '' : 'disabled'}>Confirmar y generar ronda (${ui.llSel.length}/${st.need})</button>
@@ -989,16 +1062,16 @@ function renderLuckyPanel(elim) {
     </div></div>`;
 }
 function renderGroups() {
-  const t = S.t, locked = !!t.elim || READONLY;
+  const t = S.t, locked = !!t.elim || READONLY, sp = SP(), c = sp.cols;
   let h = '<div class="groups-grid">';
   t.groups.forEach((g, gi) => {
     const st = standings(g), played = g.matches.filter(m => m.sa != null && m.sb != null).length;
     h += `<div class="card"><div class="group-head"><h3>Grupo ${g.name}</h3><span class="muted small">${played}/${g.matches.length} jugados</span></div>
       <div class="table-wrap"><table class="standings"><thead><tr><th>#</th><th class="l">Equipo</th>
-      <th title="Partidos jugados">PJ</th><th title="Ganados">G</th><th title="Empatados">E</th><th title="Perdidos">P</th>
-      <th title="Goles a favor">GF</th><th title="Goles en contra">GC</th><th title="Diferencia de goles">DG</th><th title="Puntos">PTS</th></tr></thead><tbody>`;
+      <th title="Partidos jugados">PJ</th><th title="Ganados">G</th>${sp.draws ? '<th title="Empatados">E</th>' : ''}<th title="Perdidos">P</th>
+      <th title="${c[0][1]}">${c[0][0]}</th><th title="${c[1][1]}">${c[1][0]}</th><th title="${c[2][1]}">${c[2][0]}</th><th title="Puntos">PTS</th></tr></thead><tbody>`;
     st.forEach((r, i) => {
-      h += `<tr class="${i < t.qualifiers ? 'q' : ''}"><td>${i + 1}</td><td class="l" title="${esc(teamName(r.id))}">${esc(teamName(r.id))}</td><td>${r.pj}</td><td>${r.g}</td><td>${r.e}</td><td>${r.p}</td><td>${r.gf}</td><td>${r.gc}</td><td>${r.dg > 0 ? '+' : ''}${r.dg}</td><td class="pts">${r.pts}</td></tr>`;
+      h += `<tr class="${i < t.qualifiers ? 'q' : ''}"><td>${i + 1}</td><td class="l" title="${esc(teamName(r.id))}">${esc(teamName(r.id))}</td><td>${r.pj}</td><td>${r.g}</td>${sp.draws ? `<td>${r.e}</td>` : ''}<td>${r.p}</td><td>${r.gf}</td><td>${r.gc}</td><td>${r.dg > 0 ? '+' : ''}${r.dg}</td><td class="pts">${r.pts}</td></tr>`;
     });
     h += '</tbody></table></div><div class="fixtures">';
     const days = [...new Set(g.matches.map(m => m.day))];
@@ -1019,7 +1092,7 @@ function renderGroups() {
   h += '</div>';
   const total = t.groups.reduce((a, g) => a + g.matches.length, 0);
   const played = t.groups.reduce((a, g) => a + g.matches.filter(m => m.sa != null && m.sb != null).length, 0);
-  h += `<div class="action-bar"><div class="hint">Clasifican los <b>${t.qualifiers}</b> primeros de cada grupo (resaltados en verde). Criterios: PTS → DG → GF. Progreso: ${played}/${total} partidos.</div>`;
+  h += `<div class="action-bar"><div class="hint">Clasifican los <b>${t.qualifiers}</b> primeros de cada grupo (resaltados). Criterios: ${sp.crit}.${sp.draws ? '' : ' Puntos: ganar 2-0 / 3-0 / 3-1 = 3; ganar 2-1 / 3-2 = 2 y el perdedor 1.'} Progreso: ${played}/${total} partidos.</div>`;
   if (!READONLY) {
     h += t.elim
       ? `<div class="row" style="margin:0"><button class="btn" data-act="tab" data-tab="elim">Ver eliminatoria →</button><button class="btn ghost danger" data-act="unlockGroups">✎ Editar grupos (borra la eliminatoria)</button></div>`
@@ -1060,7 +1133,7 @@ function renderSetup() {
   const list = S.teams.map((t, i) => ui.editId === t.id
     ? `<li class="pitem"><span class="pn">${i + 1}</span><input class="inp sm" value="${esc(t.name)}" maxlength="40" data-fk="edit-${t.id}" data-edit="${t.id}"><button class="icon-btn ok" data-act="saveEdit" data-id="${t.id}" title="Guardar">✓</button><button class="icon-btn" data-act="cancelEdit" title="Cancelar">✕</button></li>`
     : `<li class="pitem"><span class="pn">${i + 1}</span><span class="pname">${esc(t.name)}</span><button class="icon-btn" data-act="editTeam" data-id="${t.id}" title="Editar">✎</button><button class="icon-btn del" data-act="delTeam" data-id="${t.id}" title="Eliminar">🗑</button></li>`).join('');
-  return renderPoster('Organizador de Torneos', 'Crea, sortea y comparte tu torneo en minutos.', '<div class="steps"><span><b>1.</b> Inscribe participantes</span><span><b>2.</b> Elige el formato</span><span><b>3.</b> ¡Sortea y juega!</span></div>') + `<div class="setup-grid">
+  return renderPoster('Torneo de ' + SP().name, `${SP().ic} Crea, sortea y comparte tu torneo de ${SP().name.toLowerCase()} en minutos.`, '<div class="steps"><span><b>1.</b> Inscribe participantes</span><span><b>2.</b> Elige el formato</span><span><b>3.</b> ¡Sortea y juega!</span></div>') + `<div class="setup-grid">
     <div class="col">
       <section class="card"><h2><span class="step">1</span> Datos del torneo</h2>
         <label class="lbl" for="tName">Nombre del torneo</label>
@@ -1080,6 +1153,7 @@ function renderSetup() {
         ${opts ? `<div class="sub-opts">${opts}</div>` : ''}
       </section>
       <button class="btn primary big" data-act="generate" ${valid ? '' : 'disabled'}>🎲 Sortear y Generar Torneo</button>
+      ${S.format === 'single' ? `<button class="btn big" data-act="manualGen" ${valid ? '' : 'disabled'} title="Sin sorteo: tú eliges qué equipos se enfrentan en la ronda 1">✍ Armar llaves a mano</button>` : ''}
       ${n < 2 ? '<div class="hint" style="text-align:center">Agrega al menos 2 participantes para comenzar.</div>' : ''}
     </div></div>`;
 }
@@ -1089,11 +1163,15 @@ function championId() {
 }
 function renderRunning() {
   const t = S.t;
-  let h = renderPoster(S.name || 'Torneo', `${FORMAT_LABEL[t.kind === 'elim' ? 'single' : t.kind]} · ${S.teams.length} participantes`);
+  let h = renderPoster(S.name || 'Torneo', `${SP().ic} ${SP().name} · ${FORMAT_LABEL[t.kind === 'elim' ? 'single' : t.kind]} · ${S.teams.length} participantes`);
   const ch = championId();
   if (ch) h += `<div class="champion-banner"><span class="tro">🏆</span><div><small>Campeón del torneo</small><b>${esc(teamName(ch))}</b></div></div>`;
-  const hint = READONLY ? '' : '<span class="hint">💡 Haz clic en el nombre del ganador o escribe el marcador.</span>';
-  const shuffleBtn = READONLY ? '' : '<button class="btn primary" data-act="reshuffle" title="Vuelve a sortear quién juega contra quién">🔀 Chocolatear</button>';
+  const hint = READONLY ? '' : ui.edit
+    ? '<span class="hint">✍ Elige el equipo de cada casilla de la ronda 1. Si eliges uno que ya está en otra llave, los dos se intercambian.</span>'
+    : `<span class="hint">💡 Haz clic en el nombre del ganador o escribe el marcador${SP().draws ? '' : ' (sets ganados)'}.</span>`;
+  const shuffleBtn = READONLY ? '' : (ui.edit
+    ? '<button class="btn primary" data-act="doneEdit">✓ Listo</button>'
+    : '<button class="btn primary" data-act="reshuffle" title="Vuelve a sortear quién juega contra quién">🔀 Chocolatear</button><button class="btn" data-act="editBracket" title="Elige a mano qué equipos juegan en cada llave de la ronda 1">✍ Editar llaves</button>');
   if (t.kind === 'elim') {
     h += `<div class="sec-head"><h2>Llaves</h2>${shuffleBtn}${hint}</div>` + renderElim(t.elim);
   } else if (t.kind === 'groups') {
@@ -1121,7 +1199,14 @@ function render() {
   const scrolls = {}; document.querySelectorAll('[data-scroll]').forEach(el => scrolls[el.dataset.scroll] = el.scrollLeft);
 
   document.getElementById('hdrTitle').textContent = S.phase === 'running' || READONLY ? (S.name || 'Torneo') : 'Organizador de Torneos';
-  document.getElementById('hdrSub').textContent = S.phase === 'running' ? FORMAT_LABEL[S.t.kind === 'elim' ? 'single' : S.t.kind] + ` · ${S.teams.length} participantes` : 'Configuración del torneo';
+  const sp = SP();
+  document.getElementById('hdrSub').textContent = `${sp.ic} ${sp.name} · ` + (S.phase === 'running' ? FORMAT_LABEL[S.t.kind === 'elim' ? 'single' : S.t.kind] + ` · ${S.teams.length} participantes` : 'Configuración del torneo');
+  const sw = document.getElementById('sportSwitch');
+  sw.classList.toggle('hidden', READONLY);
+  sw.querySelectorAll('a').forEach(a => {
+    a.href = location.pathname + (a.dataset.sp === 'voley' ? '?deporte=voley' : '');
+    a.classList.toggle('on', a.dataset.sp === sp.key);
+  });
   const pill = document.getElementById('modePill');
   pill.className = 'pill ' + (READONLY ? 'spec' : 'org');
   pill.innerHTML = READONLY ? '👁 Modo Espectador (Solo lectura)' : '<span class="dot"></span> Modo Organizador';
@@ -1132,7 +1217,7 @@ function render() {
     ? `<div class="banner"><div class="inner live"><span class="row" style="margin:0 0 0 auto"><button class="btn" data-act="refreshLive">↻ Actualizar</button></span></div></div>`
     : READONLY
     ? `<div class="banner"><div class="inner"><span>👁 Estás viendo una instantánea${SNAP_AT ? ' del ' + new Date(SNAP_AT).toLocaleString() : ''}. Para ver resultados nuevos, pide al organizador un enlace actualizado.</span></div></div>` : '';
-  document.title = (S.phase === 'running' ? S.name + ' · ' : '') + 'Organizador de Torneos';
+  document.title = (S.phase === 'running' ? S.name + ' · ' : '') + sp.name + ' · Organizador de Torneos';
 
   const html = S.phase === 'setup' ? (READONLY ? renderSpecSetup() : renderSetup()) : renderRunning();
   document.getElementById('app').innerHTML = html; ui.anim = false;
@@ -1145,7 +1230,7 @@ function render() {
 const ACTIONS = {
   addOne() { const el = document.getElementById('oneName'); if (!el.value.trim()) return el.focus(); ui.focus = 'oneName'; addTeams([el.value]); },
   addBulk() { const el = document.getElementById('bulk'); if (!el.value.trim()) return toast('Pega una lista con un nombre por línea.'); addTeams(el.value.split(/\r?\n/)); },
-  sample() { addTeams(SAMPLE); },
+  sample() { addTeams(SP().sample); },
   clearTeams() { if (confirm('¿Eliminar a todos los participantes?')) { S.teams = []; ui.editId = null; save(); render(); } },
   editTeam(el) { ui.editId = el.dataset.id; ui.focus = 'edit-' + el.dataset.id; render(); },
   cancelEdit() { ui.editId = null; render(); },
@@ -1158,7 +1243,10 @@ const ACTIONS = {
   delTeam(el) { S.teams = S.teams.filter(t => t.id !== el.dataset.id); save(); render(); },
   format(el) { S.format = el.dataset.f; save(); render(); },
   oddRule(el) { S.oddRule = el.dataset.r; save(); render(); },
-  generate,
+  generate: () => generate(false),
+  manualGen: () => generate(true),
+  editBracket() { ui.edit = true; render(); },
+  doneEdit() { ui.edit = false; render(); toast('✓ Llaves listas. ¡A jugar!'); },
   genKO: genKnockout,
   unlockGroups() { if (confirm('Se eliminará la fase eliminatoria para volver a editar los grupos. ¿Continuar?')) { S.t.elim = null; ui.tab = 'groups'; afterChange(); } },
   tab(el) { ui.tab = el.dataset.tab; render(); },
@@ -1206,7 +1294,7 @@ const ACTIONS = {
   share,
   reset() {
     if (!confirm('Se borrarán todos los resultados y volverás a la configuración (los participantes se conservan). ¿Reiniciar el torneo?')) return;
-    S.phase = 'setup'; S.t = null; ui.llSel = []; ui.tab = 'groups'; save(); render(); toast('Torneo reiniciado.');
+    S.phase = 'setup'; S.t = null; ui.llSel = []; ui.tab = 'groups'; ui.edit = false; save(); render(); toast('Torneo reiniciado.');
   },
   async copyLink() { toast(await copyText(ui.shareUrl) ? '📋 Enlace copiado.' : 'No se pudo copiar: selecciona el texto y cópialo.'); },
   nativeShare() { navigator.share({ title: S.name, text: 'Sigue el torneo «' + S.name + '» en vivo:', url: ui.shareUrl }).catch(() => { }); },
@@ -1240,6 +1328,7 @@ document.addEventListener('change', e => {
     if (pointerIsDown) { holdRender = true; try { job(); } finally { holdRender = false; } renderPending = true; }
     else setTimeout(job, 0);
   }
+  else if (k === 'slot') setSlot(el.dataset.slot, el.value);
   else if (k === 'groupCount') { S.groupCount = Number(el.value); save(); render(); }
   else if (k === 'qualifiers') { S.qualifiers = Number(el.value); save(); render(); }
   else if (k === 'llSel') {
@@ -1266,7 +1355,7 @@ window.addEventListener('hashchange', () => location.reload());
 
 /* ---------- Inicio ---------- */
 /* Si el navegador abrió una versión vieja guardada en caché, recarga la nueva (una sola vez). */
-const APP_VER = '2026-11-21b';
+const APP_VER = '2026-11-21c';
 fetch(location.pathname + '?nc=' + Date.now(), { cache: 'no-store' }).then(r => r.text()).then(t => {
   const m = t.match(/const APP_VER = '([^']+)'/);
   let tried = null; try { tried = sessionStorage.getItem('trn-upd'); } catch (e) { }
