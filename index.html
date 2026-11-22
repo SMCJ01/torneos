@@ -356,8 +356,8 @@ const SPORTS = {
   futbol: { key: 'futbol', name: 'Fútbol', ic: '⚽', unit: 'goles', draws: true, crit: 'PTS → DG → GF',
             cols: [['GF', 'Goles a favor'], ['GC', 'Goles en contra'], ['DG', 'Diferencia de goles']],
             sample: ['Águilas', 'Tigres', 'Leones', 'Halcones', 'Pumas', 'Lobos', 'Toros', 'Cóndores'] },
-  voley:  { key: 'voley', name: 'Vóley', ic: '🏐', unit: 'sets', draws: false, crit: 'PTS → G → DS → SF',
-            cols: [['SF', 'Sets a favor'], ['SC', 'Sets en contra'], ['DS', 'Diferencia de sets']],
+  voley:  { key: 'voley', name: 'Vóley', ic: '🏐', unit: 'puntos', draws: false, crit: 'PTS → DP → PF',
+            cols: [['PF', 'Puntos a favor'], ['PC', 'Puntos en contra'], ['DP', 'Diferencia de puntos']],
             sample: ['Panteras', 'Delfines', 'Gacelas', 'Jaguares', 'Tiburones', 'Gaviotas', 'Linces', 'Pumas'] }
 };
 const URL_SPORT = new URLSearchParams(location.search).get('deporte') === 'voley' ? 'voley' : 'futbol';
@@ -604,8 +604,7 @@ function roundRobin(list) {
   return out;
 }
 /* Fútbol: G=3, E=1, P=0 (gf/gc = goles).
-   Vóley: sin empates (gf/gc = sets). Ganar sin ceder o con 2+ sets de diferencia (2-0, 3-0, 3-1) = 3 pts;
-   ganar ajustado (2-1, 3-2) = 2 pts y el perdedor 1 pt. */
+   Vóley: se anota el puntaje del partido (gf/gc = puntos); gana el de mayor puntaje (G=3, P=0), sin empates. */
 function standings(g) {
   const sp = SP(), rows = {};
   g.teams.forEach(id => rows[id] = { id, pj: 0, g: 0, e: 0, p: 0, gf: 0, gc: 0, dg: 0, pts: 0 });
@@ -615,17 +614,15 @@ function standings(g) {
     const A = rows[m.a], B = rows[m.b];
     A.pj++; B.pj++; A.gf += m.sa; A.gc += m.sb; B.gf += m.sb; B.gc += m.sa;
     if (m.sa === m.sb) { A.e++; B.e++; A.pts++; B.pts++; return; }
-    const W = m.sa > m.sb ? A : B, L = W === A ? B : A, ws = Math.max(m.sa, m.sb), ls = Math.min(m.sa, m.sb);
-    W.g++; L.p++;
-    if (sp.draws) W.pts += 3;
-    else { const tight = ws - ls === 1 && ls > 0; W.pts += tight ? 2 : 3; L.pts += tight ? 1 : 0; }
+    const W = m.sa > m.sb ? A : B, L = W === A ? B : A;
+    W.g++; L.p++; W.pts += 3;
   });
   const arr = Object.values(rows);
   arr.forEach(r => r.dg = r.gf - r.gc);
   const byName = (x, y) => teamName(x.id).localeCompare(teamName(y.id));
   arr.sort(sp.draws
     ? (x, y) => y.pts - x.pts || y.dg - x.dg || y.gf - x.gf || byName(x, y)
-    : (x, y) => y.pts - x.pts || y.g - x.g || y.dg - x.dg || y.gf - x.gf || byName(x, y));
+    : (x, y) => y.pts - x.pts || y.dg - x.dg || y.gf - x.gf || byName(x, y));
   return arr;
 }
 
@@ -720,9 +717,9 @@ function setScore(scope, id, side, raw) {
   if (scope !== 'group' && m.sa != null && m.sb != null) {
     if (m.sa > m.sb) m.w = ctx.a;
     else if (m.sb > m.sa) m.w = ctx.b;
-    else if (!m.w) toast(SP().draws ? 'Empate: haz clic en el nombre del ganador (ej. por penales).' : 'En vóley no hay empate: revisa los sets o haz clic en el ganador.');
+    else if (!m.w) toast(SP().draws ? 'Empate: haz clic en el nombre del ganador (ej. por penales).' : 'En vóley no hay empate: revisa el puntaje o haz clic en el ganador.');
   }
-  if (scope === 'group' && !SP().draws && m.sa != null && m.sa === m.sb) toast('En vóley no hay empates: corrige los sets de este partido.');
+  if (scope === 'group' && !SP().draws && m.sa != null && m.sa === m.sb) toast('En vóley no hay empates: corrige el puntaje de este partido.');
   afterChange();
 }
 /* ---------- Llaves a mano (ronda 1) ---------- */
@@ -1092,7 +1089,7 @@ function renderGroups() {
   h += '</div>';
   const total = t.groups.reduce((a, g) => a + g.matches.length, 0);
   const played = t.groups.reduce((a, g) => a + g.matches.filter(m => m.sa != null && m.sb != null).length, 0);
-  h += `<div class="action-bar"><div class="hint">Clasifican los <b>${t.qualifiers}</b> primeros de cada grupo (resaltados). Criterios: ${sp.crit}.${sp.draws ? '' : ' Puntos: ganar 2-0 / 3-0 / 3-1 = 3; ganar 2-1 / 3-2 = 2 y el perdedor 1.'} Progreso: ${played}/${total} partidos.</div>`;
+  h += `<div class="action-bar"><div class="hint">Clasifican los <b>${t.qualifiers}</b> primeros de cada grupo (resaltados). Criterios: ${sp.crit}.${sp.draws ? '' : ' Gana el partido el equipo con mayor puntaje (victoria = 3 PTS).'} Progreso: ${played}/${total} partidos.</div>`;
   if (!READONLY) {
     h += t.elim
       ? `<div class="row" style="margin:0"><button class="btn" data-act="tab" data-tab="elim">Ver eliminatoria →</button><button class="btn ghost danger" data-act="unlockGroups">✎ Editar grupos (borra la eliminatoria)</button></div>`
@@ -1168,7 +1165,7 @@ function renderRunning() {
   if (ch) h += `<div class="champion-banner"><span class="tro">🏆</span><div><small>Campeón del torneo</small><b>${esc(teamName(ch))}</b></div></div>`;
   const hint = READONLY ? '' : ui.edit
     ? '<span class="hint">✍ Elige el equipo de cada casilla de la ronda 1. Si eliges uno que ya está en otra llave, los dos se intercambian.</span>'
-    : `<span class="hint">💡 Haz clic en el nombre del ganador o escribe el marcador${SP().draws ? '' : ' (sets ganados)'}.</span>`;
+    : `<span class="hint">💡 Haz clic en el nombre del ganador o escribe el marcador${SP().draws ? '' : ' (gana el de mayor puntaje)'}.</span>`;
   const shuffleBtn = READONLY ? '' : (ui.edit
     ? '<button class="btn primary" data-act="doneEdit">✓ Listo</button>'
     : '<button class="btn primary" data-act="reshuffle" title="Vuelve a sortear quién juega contra quién">🔀 Chocolatear</button><button class="btn" data-act="editBracket" title="Elige a mano qué equipos juegan en cada llave de la ronda 1">✍ Editar llaves</button>');
@@ -1355,7 +1352,7 @@ window.addEventListener('hashchange', () => location.reload());
 
 /* ---------- Inicio ---------- */
 /* Si el navegador abrió una versión vieja guardada en caché, recarga la nueva (una sola vez). */
-const APP_VER = '2026-11-21c';
+const APP_VER = '2026-11-21d';
 fetch(location.pathname + '?nc=' + Date.now(), { cache: 'no-store' }).then(r => r.text()).then(t => {
   const m = t.match(/const APP_VER = '([^']+)'/);
   let tried = null; try { tried = sessionStorage.getItem('trn-upd'); } catch (e) { }
